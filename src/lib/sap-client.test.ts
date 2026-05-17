@@ -174,3 +174,35 @@ describe('createSapClient.getTransport', () => {
     });
   });
 });
+
+describe('createSapClient CSRF retry', () => {
+  it('fetches token on 403 with x-csrf-token: Required, then retries POST with the token', async () => {
+    let phase: 'first' | 'fetch' | 'retry' = 'first';
+    server.use(
+      http.post(`${HOST}${BP}/Request/SAP__self.Create`, ({ request }) => {
+        if (phase === 'first') {
+          phase = 'fetch';
+          return new HttpResponse(null, { status: 403, headers: { 'x-csrf-token': 'Required' } });
+        }
+        // phase === 'retry'
+        const token = request.headers.get('x-csrf-token');
+        if (token !== 'ABCD1234') return new HttpResponse(null, { status: 403 });
+        return HttpResponse.json(createOk, { status: 201 });
+      }),
+      http.get(`${HOST}${BP}/`, ({ request }) => {
+        if (request.headers.get('x-csrf-token') !== 'Fetch') {
+          return HttpResponse.json(serviceRoot);
+        }
+        phase = 'retry';
+        return new HttpResponse(JSON.stringify(serviceRoot), {
+          status: 200,
+          headers: { 'x-csrf-token': 'ABCD1234', 'content-type': 'application/json' }
+        });
+      })
+    );
+
+    const client = createSapClient(conn);
+    const r = await client.createTransport({ description: 'X', type: 'K', email: 'a@b.com' });
+    expect(r.Request).toBe('DEVK900123');
+  });
+});

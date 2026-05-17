@@ -69,18 +69,39 @@ export function createSapClient(conn: SapClientCallContext, fetchImpl: FetchLike
     try { return await res.json(); } catch { return {}; }
   }
 
+  let csrfToken: string | null = null;
+
+  async function fetchCsrf(): Promise<string | null> {
+    const url = buildUrl(conn, '/');
+    const res = await fetchImpl(url, { method: 'GET', headers: { Authorization: auth, 'x-csrf-token': 'Fetch', Accept: 'application/json' } });
+    return res.headers.get('x-csrf-token');
+  }
+
   async function callJson(path: string, init?: { method?: string; body?: unknown }): Promise<{ status: number; body: unknown }> {
     const url = buildUrl(conn, path);
+    const isUnsafe = !!init?.method && init.method !== 'GET';
     const headers: Record<string, string> = {
       Authorization: auth,
       Accept: 'application/json'
     };
+    if (csrfToken && isUnsafe) headers['x-csrf-token'] = csrfToken;
+
     let bodyStr: string | undefined;
     if (init?.body !== undefined) {
       headers['Content-Type'] = 'application/json';
       bodyStr = JSON.stringify(init.body);
     }
-    const res = await fetchImpl(url, { method: init?.method ?? 'GET', headers, body: bodyStr });
+
+    let res = await fetchImpl(url, { method: init?.method ?? 'GET', headers, body: bodyStr });
+
+    if (res.status === 403 && isUnsafe && res.headers.get('x-csrf-token') === 'Required') {
+      csrfToken = await fetchCsrf();
+      if (csrfToken) {
+        headers['x-csrf-token'] = csrfToken;
+        res = await fetchImpl(url, { method: init?.method ?? 'GET', headers, body: bodyStr });
+      }
+    }
+
     const body = await safeJson(res);
     return { status: res.status, body };
   }
