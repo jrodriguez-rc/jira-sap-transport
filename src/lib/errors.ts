@@ -35,9 +35,15 @@ export class SapError extends Error {
 }
 
 export class ConfigError extends Error {
+  readonly code = 'CONFIG' as const;
+
   constructor(message: string) {
     super(message);
     this.name = 'ConfigError';
+  }
+
+  toJSON(): { code: 'CONFIG'; message: string; name: 'ConfigError' } {
+    return { code: 'CONFIG', message: this.message, name: 'ConfigError' };
   }
 }
 

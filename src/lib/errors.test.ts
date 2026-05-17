@@ -23,6 +23,18 @@ describe('ConfigError', () => {
     expect(e.message).toBe('no connection');
     expect(e).toBeInstanceOf(Error);
   });
+
+  it('has code === "CONFIG" and name === "ConfigError"', () => {
+    const e = new ConfigError('nope');
+    expect(e.code).toBe('CONFIG');
+    expect(e.name).toBe('ConfigError');
+  });
+
+  it('survives JSON.stringify round-trip (Forge bridge contract)', () => {
+    const e = new ConfigError('no connection');
+    const wire = JSON.parse(JSON.stringify(e));
+    expect(wire).toEqual({ code: 'CONFIG', message: 'no connection', name: 'ConfigError' });
+  });
 });
 
 describe('AuthError', () => {
