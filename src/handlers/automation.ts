@@ -3,6 +3,7 @@ import { createTransportResolver, linkTransportResolver, releaseTransportResolve
 import { getIssueTransports } from '../lib/storage';
 import type { TransportType, SapTransportEntry } from '../lib/types';
 import { SapError } from '../lib/errors';
+import { logEvent } from '../lib/logger';
 
 interface AutomationArgs<P> { payload: P; context: { accountId?: string } }
 
@@ -16,6 +17,7 @@ export async function automationCreate(args: AutomationArgs<{
   projectId: string; issueKey: string; type: TransportType;
   target?: string; descriptionOverride?: string; email: string;
 }>): Promise<SmartValue> {
+  const started = Date.now();
   try {
     const entry = await createTransportResolver({
       payload: {
@@ -27,20 +29,25 @@ export async function automationCreate(args: AutomationArgs<{
       },
       context: { accountId: args.context.accountId ?? 'automation' }
     });
+    logEvent('info', { action: 'automation.create', projectId: args.payload.projectId, issueKey: args.payload.issueKey, requestId: entry.requestId, durationMs: Date.now() - started, outcome: 'ok' });
     return out({ requestId: entry.requestId, status: entry.status, statusText: entry.statusText });
   } catch (e) {
+    logEvent('error', { action: 'automation.create', projectId: args.payload.projectId, issueKey: args.payload.issueKey, durationMs: Date.now() - started, outcome: 'fail', errorCode: (e as { code?: string }).code, message: (e as Error).message });
     return out({ requestId: '', status: '', statusText: '' }, errMsg(e));
   }
 }
 
 export async function automationLink(args: AutomationArgs<{ projectId: string; issueKey: string; requestId: string }>): Promise<SmartValue> {
+  const started = Date.now();
   try {
     const entry = await linkTransportResolver({
       payload: args.payload,
       context: { accountId: args.context.accountId ?? 'automation' }
     });
+    logEvent('info', { action: 'automation.link', projectId: args.payload.projectId, issueKey: args.payload.issueKey, requestId: entry.requestId, durationMs: Date.now() - started, outcome: 'ok' });
     return out({ requestId: entry.requestId, status: entry.status, statusText: entry.statusText });
   } catch (e) {
+    logEvent('error', { action: 'automation.link', projectId: args.payload.projectId, issueKey: args.payload.issueKey, durationMs: Date.now() - started, outcome: 'fail', errorCode: (e as { code?: string }).code, message: (e as Error).message });
     return out({ requestId: '', status: '', statusText: '' }, errMsg(e));
   }
 }
@@ -51,6 +58,7 @@ export async function automationRelease(args: AutomationArgs<{
   requestId?: string;
   onlyType?: TransportType | 'any';
 }>): Promise<{ released: string[]; skipped: string[]; failed: Array<{ requestId: string; error: string }> }> {
+  const started = Date.now();
   const all = await getIssueTransports(args.payload.issueKey);
   let candidates: SapTransportEntry[];
   switch (args.payload.mode) {
@@ -86,6 +94,7 @@ export async function automationRelease(args: AutomationArgs<{
     }
   }
 
+  logEvent('info', { action: 'automation.release', projectId: args.payload.projectId, issueKey: args.payload.issueKey, released, skipped, failed, durationMs: Date.now() - started, outcome: failed.length === 0 ? 'ok' : 'partial' });
   return { released, skipped, failed };
 }
 

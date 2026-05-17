@@ -4,6 +4,7 @@ import { getProjectConfig, getConnection, getIssueTransports, setIssueTransports
 import { createSapClient } from '../lib/sap-client';
 import { render } from '../lib/template';
 import { ConfigError } from '../lib/errors';
+import { logEvent } from '../lib/logger';
 import type { Connection, ProjectConfig, RequestType, SapTransportEntry, TransportType } from '../lib/types';
 
 interface ResolverArgs<P = unknown> { payload: P; context: { accountId?: string } }
@@ -49,67 +50,96 @@ function toEntry(rt: RequestType): SapTransportEntry {
 export async function createTransportResolver(args: ResolverArgs<{
   projectId: string; issueKey: string; type: TransportType; descriptionOverride?: string; target?: string;
 }>) {
-  const { conn, cfg } = await resolveConnection(args.payload.projectId);
-  const accountId = args.context.accountId;
-  if (!accountId) throw new Error('Missing accountId');
-  const email = await fetchUserEmail(accountId);
-  const issue = await fetchIssue(args.payload.issueKey);
+  const started = Date.now();
+  try {
+    const { conn, cfg } = await resolveConnection(args.payload.projectId);
+    const accountId = args.context.accountId;
+    if (!accountId) throw new Error('Missing accountId');
+    const email = await fetchUserEmail(accountId);
+    const issue = await fetchIssue(args.payload.issueKey);
 
-  const renderCtx = { issue, project: { code: cfg.projectCode }, user: { email }, date: { iso: new Date().toISOString().slice(0, 10) } };
-  const rendered = args.payload.descriptionOverride && args.payload.descriptionOverride.trim().length > 0
-    ? render(args.payload.descriptionOverride, renderCtx)
-    : render(cfg.descriptionTemplate, renderCtx);
+    const renderCtx = { issue, project: { code: cfg.projectCode }, user: { email }, date: { iso: new Date().toISOString().slice(0, 10) } };
+    const rendered = args.payload.descriptionOverride && args.payload.descriptionOverride.trim().length > 0
+      ? render(args.payload.descriptionOverride, renderCtx)
+      : render(cfg.descriptionTemplate, renderCtx);
 
-  const client = createSapClient(conn);
-  const rt = await client.createTransport({
-    description: rendered.text,
-    type: args.payload.type,
-    email,
-    target: args.payload.target ?? cfg.defaults.target
-  });
+    const client = createSapClient(conn);
+    const rt = await client.createTransport({
+      description: rendered.text,
+      type: args.payload.type,
+      email,
+      target: args.payload.target ?? cfg.defaults.target
+    });
 
-  const entry = toEntry(rt);
-  const list = await getIssueTransports(args.payload.issueKey);
-  await setIssueTransports(args.payload.issueKey, [...list, entry]);
-  return entry;
+    const entry = toEntry(rt);
+    const list = await getIssueTransports(args.payload.issueKey);
+    await setIssueTransports(args.payload.issueKey, [...list, entry]);
+
+    logEvent('info', { action: 'issue.create', projectId: args.payload.projectId, issueKey: args.payload.issueKey, requestId: entry.requestId, durationMs: Date.now() - started, outcome: 'ok' });
+    return entry;
+  } catch (e) {
+    logEvent('error', { action: 'issue.create', projectId: args.payload.projectId, issueKey: args.payload.issueKey, durationMs: Date.now() - started, outcome: 'fail', errorCode: (e as { code?: string }).code, message: (e as Error).message });
+    throw e;
+  }
 }
 
 export async function linkTransportResolver(args: ResolverArgs<{ projectId: string; issueKey: string; requestId: string }>) {
-  const { conn } = await resolveConnection(args.payload.projectId);
-  const client = createSapClient(conn);
-  const rt = await client.getTransport(args.payload.requestId);
-  const entry = toEntry(rt);
-  const list = await getIssueTransports(args.payload.issueKey);
-  if (!list.some((e) => e.requestId === entry.requestId)) {
-    await setIssueTransports(args.payload.issueKey, [...list, entry]);
+  const started = Date.now();
+  try {
+    const { conn } = await resolveConnection(args.payload.projectId);
+    const client = createSapClient(conn);
+    const rt = await client.getTransport(args.payload.requestId);
+    const entry = toEntry(rt);
+    const list = await getIssueTransports(args.payload.issueKey);
+    if (!list.some((e) => e.requestId === entry.requestId)) {
+      await setIssueTransports(args.payload.issueKey, [...list, entry]);
+    }
+    logEvent('info', { action: 'issue.link', projectId: args.payload.projectId, issueKey: args.payload.issueKey, requestId: entry.requestId, durationMs: Date.now() - started, outcome: 'ok' });
+    return entry;
+  } catch (e) {
+    logEvent('error', { action: 'issue.link', projectId: args.payload.projectId, issueKey: args.payload.issueKey, durationMs: Date.now() - started, outcome: 'fail', errorCode: (e as { code?: string }).code, message: (e as Error).message });
+    throw e;
   }
-  return entry;
 }
 
 export async function releaseTransportResolver(args: ResolverArgs<{ projectId: string; issueKey: string; requestId: string }>) {
-  const { conn } = await resolveConnection(args.payload.projectId);
-  const client = createSapClient(conn);
-  const rt = await client.releaseTransport(args.payload.requestId);
-  const list = await getIssueTransports(args.payload.issueKey);
-  const next = list.map((e) =>
-    e.requestId === rt.Request
-      ? { ...e, status: rt.Status, statusText: rt.StatusText, releasedAt: new Date().toISOString() }
-      : e
-  );
-  await setIssueTransports(args.payload.issueKey, next);
-  return { requestId: rt.Request, status: rt.Status, statusText: rt.StatusText };
+  const started = Date.now();
+  try {
+    const { conn } = await resolveConnection(args.payload.projectId);
+    const client = createSapClient(conn);
+    const rt = await client.releaseTransport(args.payload.requestId);
+    const list = await getIssueTransports(args.payload.issueKey);
+    const next = list.map((e) =>
+      e.requestId === rt.Request
+        ? { ...e, status: rt.Status, statusText: rt.StatusText, releasedAt: new Date().toISOString() }
+        : e
+    );
+    await setIssueTransports(args.payload.issueKey, next);
+    logEvent('info', { action: 'issue.release', projectId: args.payload.projectId, issueKey: args.payload.issueKey, requestId: args.payload.requestId, durationMs: Date.now() - started, outcome: 'ok' });
+    return { requestId: rt.Request, status: rt.Status, statusText: rt.StatusText };
+  } catch (e) {
+    logEvent('error', { action: 'issue.release', projectId: args.payload.projectId, issueKey: args.payload.issueKey, requestId: args.payload.requestId, durationMs: Date.now() - started, outcome: 'fail', errorCode: (e as { code?: string }).code, message: (e as Error).message });
+    throw e;
+  }
 }
 
 export async function refreshTransportResolver(args: ResolverArgs<{ projectId: string; issueKey: string; requestId: string }>) {
-  const { conn } = await resolveConnection(args.payload.projectId);
-  const client = createSapClient(conn);
-  const rt = await client.getTransport(args.payload.requestId);
-  const list = await getIssueTransports(args.payload.issueKey);
-  const next = list.map((e) =>
-    e.requestId === rt.Request ? { ...e, status: rt.Status, statusText: rt.StatusText } : e
-  );
-  await setIssueTransports(args.payload.issueKey, next);
-  return { requestId: rt.Request, status: rt.Status, statusText: rt.StatusText };
+  const started = Date.now();
+  try {
+    const { conn } = await resolveConnection(args.payload.projectId);
+    const client = createSapClient(conn);
+    const rt = await client.getTransport(args.payload.requestId);
+    const list = await getIssueTransports(args.payload.issueKey);
+    const next = list.map((e) =>
+      e.requestId === rt.Request ? { ...e, status: rt.Status, statusText: rt.StatusText } : e
+    );
+    await setIssueTransports(args.payload.issueKey, next);
+    logEvent('info', { action: 'issue.refresh', projectId: args.payload.projectId, issueKey: args.payload.issueKey, requestId: args.payload.requestId, durationMs: Date.now() - started, outcome: 'ok' });
+    return { requestId: rt.Request, status: rt.Status, statusText: rt.StatusText };
+  } catch (e) {
+    logEvent('error', { action: 'issue.refresh', projectId: args.payload.projectId, issueKey: args.payload.issueKey, requestId: args.payload.requestId, durationMs: Date.now() - started, outcome: 'fail', errorCode: (e as { code?: string }).code, message: (e as Error).message });
+    throw e;
+  }
 }
 
 export async function listTransportsResolver(args: ResolverArgs<{ issueKey: string }>): Promise<SapTransportEntry[]> {
