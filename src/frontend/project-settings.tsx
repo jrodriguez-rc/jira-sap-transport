@@ -26,6 +26,10 @@ interface SelectOption {
   value: string;
 }
 
+type ResolverResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: { code: string; message: string; severity?: string; target?: string; httpStatus?: number } };
+
 const TYPE_LABELS: Record<TransportType, string> = {
   K: 'Workbench',
   W: 'Customizing',
@@ -45,12 +49,16 @@ const App: React.FC = () => {
         extension: { project: { id: string } };
       };
       setProjectId(ctx.extension.project.id);
-      setConnections(await invoke<ConnPublic[]>('connections.list'));
-      const c = await invoke<ProjectConfig | undefined>('project.getConfig', {
+      const conns = await invoke<ResolverResult<ConnPublic[]>>('connections.list');
+      setConnections(conns.ok ? conns.data : []);
+      if (!conns.ok) setMessage(conns.error.message);
+      const c = await invoke<ResolverResult<ProjectConfig | undefined>>('project.getConfig', {
         projectId: ctx.extension.project.id,
       });
+      const cfgValue = c.ok ? c.data : undefined;
+      if (!c.ok) setMessage(c.error.message);
       setCfg(
-        c ?? {
+        cfgValue ?? {
           projectCode: '',
           descriptionTemplate: '',
           defaults: { type: 'K' },
@@ -60,7 +68,7 @@ const App: React.FC = () => {
   }, []);
 
   const onPreview = async (template: string): Promise<void> => {
-    const r = await invoke<RenderResult>('project.previewTemplate', {
+    const r = await invoke<ResolverResult<RenderResult>>('project.previewTemplate', {
       template,
       sampleContext: {
         issue: {
@@ -69,14 +77,18 @@ const App: React.FC = () => {
         },
       },
     });
-    setPreview(r);
+    if (r.ok) {
+      setPreview(r.data);
+    } else {
+      setMessage(r.error.message);
+    }
   };
 
   const onSave = async (): Promise<void> => {
     if (!cfg) return;
     try {
-      await invoke('project.saveConfig', { projectId, config: cfg });
-      setMessage('Saved');
+      const r = await invoke<ResolverResult<unknown>>('project.saveConfig', { projectId, config: cfg });
+      setMessage(r.ok ? 'Saved' : r.error.message);
     } catch (e) {
       setMessage((e as Error).message);
     }

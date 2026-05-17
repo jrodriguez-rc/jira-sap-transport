@@ -26,6 +26,10 @@ interface IssueContext {
   };
 }
 
+type ResolverResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: { code: string; message: string; severity?: string; target?: string; httpStatus?: number } };
+
 const TYPE_LABELS: Record<TransportType, string> = {
   K: 'Workbench',
   W: 'Customizing',
@@ -45,23 +49,29 @@ const App: React.FC = () => {
       const ctx = (await view.getContext()) as unknown as IssueContext;
       setProjectId(ctx.extension.project.id);
       setIssueKey(ctx.extension.issue.key);
-      const list = await invoke<SapTransportEntry[]>('issue.list', {
+      const r = await invoke<ResolverResult<SapTransportEntry[]>>('issue.list', {
         issueKey: ctx.extension.issue.key,
       });
-      setEntries(list);
+      setEntries(r.ok ? r.data : []);
+      if (!r.ok) setMessage({ kind: 'error', text: r.error.message });
     })();
   }, []);
 
   const reload = async (): Promise<void> => {
-    const list = await invoke<SapTransportEntry[]>('issue.list', { issueKey });
-    setEntries(list);
+    const r = await invoke<ResolverResult<SapTransportEntry[]>>('issue.list', { issueKey });
+    setEntries(r.ok ? r.data : []);
+    if (!r.ok) setMessage({ kind: 'error', text: r.error.message });
   };
 
   const onRelease = async (requestId: string): Promise<void> => {
     try {
-      await invoke('issue.release', { projectId, issueKey, requestId });
-      setMessage({ kind: 'success', text: `Released ${requestId}` });
-      await reload();
+      const r = await invoke<ResolverResult<unknown>>('issue.release', { projectId, issueKey, requestId });
+      if (r.ok) {
+        setMessage({ kind: 'success', text: `Released ${requestId}` });
+        await reload();
+      } else {
+        setMessage({ kind: 'error', text: r.error.message });
+      }
     } catch (e) {
       setMessage({ kind: 'error', text: (e as Error).message });
     }
@@ -69,8 +79,12 @@ const App: React.FC = () => {
 
   const onRefresh = async (requestId: string): Promise<void> => {
     try {
-      await invoke('issue.refresh', { projectId, issueKey, requestId });
-      await reload();
+      const r = await invoke<ResolverResult<unknown>>('issue.refresh', { projectId, issueKey, requestId });
+      if (r.ok) {
+        await reload();
+      } else {
+        setMessage({ kind: 'error', text: r.error.message });
+      }
     } catch (e) {
       setMessage({ kind: 'error', text: (e as Error).message });
     }
@@ -187,14 +201,18 @@ const CreateDialog: React.FC<CreateDialogProps> = ({
 
   const submit = async (): Promise<void> => {
     try {
-      const r = await invoke<SapTransportEntry>('issue.create', {
+      const r = await invoke<ResolverResult<SapTransportEntry>>('issue.create', {
         projectId,
         issueKey,
         type,
         descriptionOverride: override,
         target: target.length > 0 ? target : undefined,
       });
-      await onDone(`Created ${r.requestId}`);
+      if (r.ok) {
+        await onDone(`Created ${r.data.requestId}`);
+      } else {
+        onError(r.error.message);
+      }
     } catch (e) {
       onError((e as Error).message);
     }
@@ -250,12 +268,16 @@ const LinkDialog: React.FC<LinkDialogProps> = ({
 
   const submit = async (): Promise<void> => {
     try {
-      const r = await invoke<SapTransportEntry>('issue.link', {
+      const r = await invoke<ResolverResult<SapTransportEntry>>('issue.link', {
         projectId,
         issueKey,
         requestId,
       });
-      await onDone(`Linked ${r.requestId}`);
+      if (r.ok) {
+        await onDone(`Linked ${r.data.requestId}`);
+      } else {
+        onError(r.error.message);
+      }
     } catch (e) {
       onError((e as Error).message);
     }

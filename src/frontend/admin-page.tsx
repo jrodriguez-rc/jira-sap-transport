@@ -28,14 +28,23 @@ interface ConnPublic {
 
 type EditingConn = Partial<ConnPublic & { password?: string }>;
 
+type ResolverResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: { code: string; message: string; severity?: string; target?: string; httpStatus?: number } };
+
 const App: React.FC = () => {
   const [items, setItems] = useState<ConnPublic[]>([]);
   const [editing, setEditing] = useState<EditingConn | null>(null);
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
 
   const reload = async (): Promise<void> => {
-    const res = await invoke<ConnPublic[]>('connections.list');
-    setItems(res);
+    const r = await invoke<ResolverResult<ConnPublic[]>>('connections.list');
+    if (r.ok) {
+      setItems(r.data);
+    } else {
+      setItems([]);
+      setMessage({ kind: 'error', text: r.error.message });
+    }
   };
 
   useEffect(() => {
@@ -44,10 +53,14 @@ const App: React.FC = () => {
 
   const onSave = async (values: Record<string, string>): Promise<void> => {
     try {
-      await invoke('connections.save', { ...editing, ...values });
-      setMessage({ kind: 'success', text: 'Saved' });
-      setEditing(null);
-      await reload();
+      const r = await invoke<ResolverResult<unknown>>('connections.save', { ...editing, ...values });
+      if (r.ok) {
+        setMessage({ kind: 'success', text: 'Saved' });
+        setEditing(null);
+        await reload();
+      } else {
+        setMessage({ kind: 'error', text: r.error.message });
+      }
     } catch (e) {
       setMessage({ kind: 'error', text: (e as Error).message });
     }
@@ -55,13 +68,19 @@ const App: React.FC = () => {
 
   const onDelete = async (id: string): Promise<void> => {
     try {
-      await invoke('connections.delete', { id });
-      await reload();
+      const r = await invoke<ResolverResult<unknown>>('connections.delete', { id });
+      if (r.ok) {
+        await reload();
+      } else {
+        setMessage({ kind: 'error', text: r.error.message });
+      }
     } catch (e) {
       setMessage({ kind: 'error', text: (e as Error).message });
     }
   };
 
+  // connections.test is intentionally NOT wrapped in bridgeSafe — it already
+  // returns its own { ok, error? } Result-like shape from testConnection().
   const onTest = async (values: Record<string, string>): Promise<void> => {
     try {
       const res = await invoke<{ ok: boolean; error?: { message: string } }>(
