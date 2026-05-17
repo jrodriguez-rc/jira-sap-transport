@@ -269,3 +269,59 @@ describe('createSapClient CSRF retry', () => {
     expect(r.Request).toBe('DEVK900123');
   });
 });
+
+describe('createSapClient CSRF + session cookie', () => {
+  it('captures set-cookie on Fetch and replays it as Cookie on retry', async () => {
+    // Use a hand-rolled fetch stub (rather than globalThis.fetch + msw) so we can
+    // assert on exactly what the client passes as the Cookie header, without
+    // undici's auto-tracking cookie jar muddying the assertion.
+    type FetchInit = { method?: string; headers?: Record<string, string>; body?: string };
+    const calls: Array<{ url: string; init: FetchInit }> = [];
+
+    function makeRes(status: number, headers: Record<string, string>, body: unknown) {
+      const h = new Map(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
+      return Promise.resolve({
+        status,
+        json: async () => body,
+        headers: { get: (n: string) => h.get(n.toLowerCase()) ?? null }
+      });
+    }
+
+    let phase: 'first' | 'fetch' | 'retry' = 'first';
+    const fakeFetch = (url: string, init?: FetchInit) => {
+      calls.push({ url, init: init ?? {} });
+      const method = init?.method ?? 'GET';
+      if (method === 'POST' && url.includes('/Request/SAP__self.Create')) {
+        if (phase === 'first') {
+          phase = 'fetch';
+          return makeRes(403, { 'x-csrf-token': 'Required' }, null);
+        }
+        return makeRes(201, { 'content-type': 'application/json' }, createOk);
+      }
+      if (method === 'GET' && (init?.headers as Record<string, string> | undefined)?.['x-csrf-token'] === 'Fetch') {
+        phase = 'retry';
+        return makeRes(
+          200,
+          {
+            'x-csrf-token': 'TOKEN_X',
+            'set-cookie': 'SAP_SESSIONID_NPL_001=ABCDEF; Path=/; HttpOnly',
+            'content-type': 'application/json'
+          },
+          serviceRoot
+        );
+      }
+      return makeRes(200, { 'content-type': 'application/json' }, serviceRoot);
+    };
+
+    const client = createSapClient(conn, fakeFetch as never);
+    const r = await client.createTransport({ description: 'X', type: 'K', email: 'a@b.com' });
+    expect(r.Request).toBe('DEVK900123');
+
+    // Three calls: the initial POST (403), the CSRF Fetch GET, and the retry POST.
+    expect(calls).toHaveLength(3);
+    const retry = calls[2];
+    expect(retry.init.method).toBe('POST');
+    expect(retry.init.headers?.['x-csrf-token']).toBe('TOKEN_X');
+    expect(retry.init.headers?.['Cookie']).toBe('SAP_SESSIONID_NPL_001=ABCDEF');
+  });
+});

@@ -71,11 +71,26 @@ export function createSapClient(conn: SapClientCallContext, fetchImpl: FetchLike
   }
 
   let csrfToken: string | null = null;
+  let csrfCookie: string | null = null;
 
-  async function fetchCsrf(): Promise<string | null> {
+  function extractCookies(setCookieHeader: string | null): string | null {
+    if (!setCookieHeader) return null;
+    // set-cookie may be comma-joined when multiple cookies are returned via headers.get().
+    // Each piece is `name=value; Path=...; HttpOnly; SameSite=...`. We need only the `name=value`.
+    const pairs = setCookieHeader
+      .split(/,(?=[^;]+=[^;]+)/)             // split on commas that precede another "name=value"
+      .map((c) => c.split(';')[0].trim())
+      .filter(Boolean);
+    return pairs.length > 0 ? pairs.join('; ') : null;
+  }
+
+  async function fetchCsrf(): Promise<{ token: string | null; cookie: string | null }> {
     const url = buildUrl(conn, '/');
     const res = await fetchImpl(url, { method: 'GET', headers: { Authorization: auth, 'x-csrf-token': 'Fetch', Accept: 'application/json' } });
-    return res.headers.get('x-csrf-token');
+    return {
+      token: res.headers.get('x-csrf-token'),
+      cookie: extractCookies(res.headers.get('set-cookie'))
+    };
   }
 
   async function callJson(path: string, init?: { method?: string; body?: unknown }): Promise<{ status: number; body: unknown }> {
@@ -86,6 +101,7 @@ export function createSapClient(conn: SapClientCallContext, fetchImpl: FetchLike
       Accept: 'application/json'
     };
     if (csrfToken && isUnsafe) headers['x-csrf-token'] = csrfToken;
+    if (csrfCookie) headers['Cookie'] = csrfCookie;
 
     let bodyStr: string | undefined;
     if (init?.body !== undefined) {
@@ -96,11 +112,14 @@ export function createSapClient(conn: SapClientCallContext, fetchImpl: FetchLike
     let res = await fetchImpl(url, { method: init?.method ?? 'GET', headers, body: bodyStr });
 
     if (res.status === 403 && isUnsafe && res.headers.get('x-csrf-token') === 'Required') {
-      csrfToken = await fetchCsrf();
-      if (!csrfToken) {
+      const { token, cookie } = await fetchCsrf();
+      if (!token) {
         throw new SapError({ code: 'CSRF_FETCH_FAILED', message: 'SAP required CSRF token but did not return one', severity: 'error', httpStatus: 403 });
       }
+      csrfToken = token;
+      if (cookie) csrfCookie = cookie;
       headers['x-csrf-token'] = csrfToken;
+      if (csrfCookie) headers['Cookie'] = csrfCookie;
       res = await fetchImpl(url, { method: init?.method ?? 'GET', headers, body: bodyStr });
     }
 
