@@ -91,3 +91,45 @@ describe('connections storage', () => {
     expect('password' in pub).toBe(false);
   });
 });
+
+import { getProjectConfig, saveProjectConfig, getIssueTransports, setIssueTransports } from './storage';
+import type { ProjectConfig, SapTransportEntry } from './types';
+
+const cfg: ProjectConfig = {
+  connectionId: 'dev-100',
+  projectCode: 'PROJX',
+  descriptionTemplate: '{{issue.key}}',
+  defaults: { type: 'K' }
+};
+
+describe('project config storage', () => {
+  it('saves and reads project config', async () => {
+    await saveProjectConfig('10001', cfg);
+    expect(await getProjectConfig('10001')).toEqual(cfg);
+  });
+
+  it('returns undefined for unknown project', async () => {
+    expect(await getProjectConfig('99999')).toBeUndefined();
+  });
+});
+
+describe('issue transports', () => {
+  const entry: SapTransportEntry = {
+    requestId: 'DEVK900123',
+    type: 'K',
+    target: 'QAS',
+    description: 'PROJ-1 Hello',
+    createdAt: '2026-05-17T10:00:00Z',
+    status: 'D',
+    statusText: 'Modifiable'
+  };
+
+  it('returns [] for an issue with no property', async () => {
+    expect(await getIssueTransports('PROJ-1')).toEqual([]);
+  });
+
+  it('sets and reads the transport list', async () => {
+    await setIssueTransports('PROJ-1', [entry]);
+    expect(await getIssueTransports('PROJ-1')).toEqual([entry]);
+  });
+});
