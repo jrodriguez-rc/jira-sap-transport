@@ -44,11 +44,11 @@ modules:
     - key: resolver
       handler: index.handler
     - key: automation-create
-      handler: index.handler
+      handler: index.automationCreateHandler
     - key: automation-release
-      handler: index.handler
+      handler: index.automationReleaseHandler
     - key: automation-link
-      handler: index.handler
+      handler: index.automationLinkHandler
 
 resources:
   - key: admin-ui

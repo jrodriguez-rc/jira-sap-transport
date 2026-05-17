@@ -33,3 +33,17 @@ resolver.define('automation.link', automationLink);
 resolver.define('automation.release', automationRelease);
 
 export const handler = resolver.getDefinitions();
+
+// Plain Forge function handlers for jiraAutomationAction modules.
+// These receive the automation rule's configured payload directly as `payload`,
+// not wrapped in a @forge/bridge dispatcher envelope, so they cannot share
+// `handler` (which is a @forge/resolver dispatcher).
+
+export const automationCreateHandler = (payload: Parameters<typeof automationCreate>[0]['payload'], context: { accountId?: string }) =>
+  automationCreate({ payload, context });
+
+export const automationReleaseHandler = (payload: Parameters<typeof automationRelease>[0]['payload'], context: { accountId?: string }) =>
+  automationRelease({ payload, context });
+
+export const automationLinkHandler = (payload: Parameters<typeof automationLink>[0]['payload'], context: { accountId?: string }) =>
+  automationLink({ payload, context });

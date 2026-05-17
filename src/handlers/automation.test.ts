@@ -183,3 +183,32 @@ describe('automationCreate / automationLink error paths', () => {
     expect(r.sapTransport.error).toMatch(/configur/i);
   });
 });
+
+import { automationCreateHandler, automationReleaseHandler, automationLinkHandler } from '../index';
+
+describe('automation function-module handlers (index exports)', () => {
+  it('automationCreateHandler accepts (payload, context) directly', async () => {
+    const r = await automationCreateHandler(
+      { projectId: '10001', issueKey: 'PROJ-1', email: 'a@b.com', type: 'K' },
+      { accountId: 'acc' }
+    );
+    expect(r.sapTransport.requestId).toBeTruthy();
+  });
+
+  it('automationLinkHandler accepts (payload, context) directly', async () => {
+    const r = await automationLinkHandler(
+      { projectId: '10001', issueKey: 'PROJ-1', requestId: 'DEVK900200' },
+      {}
+    );
+    expect(r.sapTransport.requestId).toBe('DEVK900200');
+  });
+
+  it('automationReleaseHandler accepts (payload, context) directly', async () => {
+    issueProps.set('PROJ-1', [{ requestId: 'A', type: 'K', target: 'QAS', description: 'x', createdAt: '2026-01-01', status: 'D', statusText: 'm' }]);
+    const r = await automationReleaseHandler(
+      { projectId: '10001', issueKey: 'PROJ-1', mode: 'by-id', requestId: 'A' },
+      {}
+    );
+    expect(r.released).toEqual(['A']);
+  });
+});
