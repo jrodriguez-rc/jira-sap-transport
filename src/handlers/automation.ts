@@ -25,7 +25,8 @@ export async function automationCreate(args: AutomationArgs<{
         issueKey: args.payload.issueKey,
         type: args.payload.type,
         target: args.payload.target,
-        descriptionOverride: args.payload.descriptionOverride
+        descriptionOverride: args.payload.descriptionOverride,
+        emailOverride: args.payload.email
       },
       context: { accountId: args.context.accountId ?? 'automation' }
     });

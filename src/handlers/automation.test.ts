@@ -36,12 +36,17 @@ vi.mock('@forge/api', () => ({
     s.reduce((acc, part, i) => acc + part + (args[i] ?? ''), '')
 }));
 
+const createTransportCalls: Array<{ description: string; type: string; email: string; target?: string }> = [];
+
 vi.mock('../lib/sap-client', () => ({
   createSapClient: () => ({
-    createTransport: vi.fn(async () => ({
-      Request: 'DEVK900123', Description: 'x', Owner: 'JAIME', Type: 'K', TypeText: 'Workbench',
-      Target: 'QAS', Status: 'D', StatusText: 'Modifiable', SAP__Messages: []
-    })),
+    createTransport: vi.fn(async (input: { description: string; type: string; email: string; target?: string }) => {
+      createTransportCalls.push(input);
+      return {
+        Request: 'DEVK900123', Description: 'x', Owner: 'JAIME', Type: 'K', TypeText: 'Workbench',
+        Target: 'QAS', Status: 'D', StatusText: 'Modifiable', SAP__Messages: []
+      };
+    }),
     releaseTransport: vi.fn(async (id: string) => {
       if (id === 'BAD_PLAIN') throw 'plain string error';
       if (id === 'BAD_SAP') {
@@ -67,6 +72,7 @@ const cfg: ProjectConfig = { connectionId: 'c1', projectCode: 'P', descriptionTe
 beforeEach(() => {
   appStore.clear();
   issueProps.clear();
+  createTransportCalls.length = 0;
   appStore.set('project:10001:config', cfg);
   appStore.set('connections:c1', { id: 'c1', label: 'DEV', hostname: 'https://x', client: '100', username: 'u', password: 'p' });
 });
@@ -76,6 +82,16 @@ describe('automationCreate', () => {
     const r = await automationCreate({ payload: { projectId: '10001', issueKey: 'PROJ-1', email: 'a@b.com', type: 'K' }, context: { accountId: 'acc' } });
     expect(r.sapTransport.requestId).toBe('DEVK900123');
     expect(r.sapTransport.error).toBe('');
+  });
+
+  it('forwards the email input to createTransport', async () => {
+    const r = await automationCreate({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', email: 'auto@b.com', type: 'K' },
+      context: { accountId: 'acc' }
+    });
+    expect(r.sapTransport.requestId).toBe('DEVK900123');
+    expect(createTransportCalls.length).toBeGreaterThan(0);
+    expect(createTransportCalls[createTransportCalls.length - 1].email).toBe('auto@b.com');
   });
 });
 

@@ -49,13 +49,19 @@ function toEntry(rt: RequestType): SapTransportEntry {
 
 export async function createTransportResolver(args: ResolverArgs<{
   projectId: string; issueKey: string; type: TransportType; descriptionOverride?: string; target?: string;
+  emailOverride?: string;
 }>) {
   const started = Date.now();
   try {
     const { conn, cfg } = await resolveConnection(args.payload.projectId);
     const accountId = args.context.accountId;
-    if (!accountId) throw new Error('Missing accountId');
-    const email = await fetchUserEmail(accountId);
+    let email: string;
+    if (args.payload.emailOverride) {
+      email = args.payload.emailOverride;
+    } else {
+      if (!accountId) throw new Error('Missing accountId');
+      email = await fetchUserEmail(accountId);
+    }
     const issue = await fetchIssue(args.payload.issueKey);
 
     const renderCtx = { issue, project: { code: cfg.projectCode }, user: { email }, date: { iso: new Date().toISOString().slice(0, 10) } };
