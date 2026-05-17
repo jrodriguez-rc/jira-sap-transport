@@ -116,28 +116,28 @@ const conn = { hostname: HOST, client: CLIENT, username: 'u', password: 'p' };
 
 describe('createSapClient.testConnection', () => {
   it('returns ok:true on a valid service-root response', async () => {
-    const client = createSapClient(conn);
+    const client = createSapClient(conn, globalThis.fetch as never);
     expect(await client.testConnection()).toEqual({ ok: true });
   });
 });
 
 describe('createSapClient.createTransport', () => {
   it('creates a transport and returns the entity', async () => {
-    const client = createSapClient(conn);
+    const client = createSapClient(conn, globalThis.fetch as never);
     const r = await client.createTransport({ description: 'PROJ-1 Hello', type: 'K', email: 'a@b.com', target: 'QAS' });
     expect(r.Request).toBe('DEVK900123');
     expect(r.Status).toBe('D');
   });
 
   it('throws SapError parsed from the OData response on 4xx', async () => {
-    const client = createSapClient(conn);
+    const client = createSapClient(conn, globalThis.fetch as never);
     await expect(
       client.createTransport({ description: 'X', type: 'K', email: 'a@b.com', target: 'BAD' })
     ).rejects.toMatchObject({ code: 'INVALID_TARGET', httpStatus: 400 });
   });
 
   it('throws RangeError when description exceeds 60 chars', async () => {
-    const client = createSapClient(conn);
+    const client = createSapClient(conn, globalThis.fetch as never);
     await expect(
       client.createTransport({ description: 'a'.repeat(61), type: 'K', email: 'a@b.com' })
     ).rejects.toBeInstanceOf(RangeError);
@@ -146,30 +146,30 @@ describe('createSapClient.createTransport', () => {
 
 describe('createSapClient.releaseTransport', () => {
   it('returns the entity on success', async () => {
-    const r = await createSapClient(conn).releaseTransport('DEVK900123');
+    const r = await createSapClient(conn, globalThis.fetch as never).releaseTransport('DEVK900123');
     expect(r.Status).toBe('R');
   });
 
   it('still resolves with warnings in SAP__Messages', async () => {
-    const r = await createSapClient(conn).releaseTransport('DEVK900999');
+    const r = await createSapClient(conn, globalThis.fetch as never).releaseTransport('DEVK900999');
     expect(r.SAP__Messages?.[0].numericSeverity).toBe(2);
   });
 });
 
 describe('createSapClient.getTransport', () => {
   it('returns the entity', async () => {
-    const r = await createSapClient(conn).getTransport('DEVK900123');
+    const r = await createSapClient(conn, globalThis.fetch as never).getTransport('DEVK900123');
     expect(r.Request).toBe('DEVK900123');
   });
 
   it('throws SapError on 404', async () => {
-    await expect(createSapClient(conn).getTransport('NOPE')).rejects.toMatchObject({
+    await expect(createSapClient(conn, globalThis.fetch as never).getTransport('NOPE')).rejects.toMatchObject({
       code: 'NOT_FOUND', httpStatus: 404
     });
   });
 
   it('throws SapError with code AUTH on 401', async () => {
-    await expect(createSapClient(conn).getTransport('UNAUTHZ')).rejects.toMatchObject({
+    await expect(createSapClient(conn, globalThis.fetch as never).getTransport('UNAUTHZ')).rejects.toMatchObject({
       code: 'AUTH', httpStatus: 401
     });
   });
@@ -188,7 +188,7 @@ describe('createSapClient.testConnection extra branches', () => {
     server.use(
       http.get(`${HOST}${BP}/`, () => HttpResponse.json({ '@odata.context': '$metadata', value: [] }))
     );
-    const res = await createSapClient(conn).testConnection();
+    const res = await createSapClient(conn, globalThis.fetch as never).testConnection();
     expect(res.ok).toBe(false);
     if (!res.ok) {
       expect(res.error.code).toBe('BAD_SERVICE');
@@ -219,7 +219,7 @@ describe('createSapClient CSRF retry — negative cases', () => {
         return HttpResponse.json(serviceRoot);
       })
     );
-    await expect(createSapClient(conn).getTransport('FORBID')).rejects.toMatchObject({ httpStatus: 403 });
+    await expect(createSapClient(conn, globalThis.fetch as never).getTransport('FORBID')).rejects.toMatchObject({ httpStatus: 403 });
     expect(csrfFetchCount).toBe(0);
   });
 
@@ -233,7 +233,7 @@ describe('createSapClient CSRF retry — negative cases', () => {
       )
     );
     await expect(
-      createSapClient(conn).createTransport({ description: 'X', type: 'K', email: 'a@b.com' })
+      createSapClient(conn, globalThis.fetch as never).createTransport({ description: 'X', type: 'K', email: 'a@b.com' })
     ).rejects.toMatchObject({ code: 'CSRF_FETCH_FAILED', httpStatus: 403 });
   });
 });
@@ -264,7 +264,7 @@ describe('createSapClient CSRF retry', () => {
       })
     );
 
-    const client = createSapClient(conn);
+    const client = createSapClient(conn, globalThis.fetch as never);
     const r = await client.createTransport({ description: 'X', type: 'K', email: 'a@b.com' });
     expect(r.Request).toBe('DEVK900123');
   });

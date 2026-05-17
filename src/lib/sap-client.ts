@@ -1,3 +1,4 @@
+import api from '@forge/api';
 import { SapError, type SapErrorSeverity } from './errors';
 import type { RequestType, SapClientCallContext, SapMessage, TransportType } from './types';
 
@@ -62,7 +63,7 @@ type FetchLike = (input: string, init?: { method?: string; headers?: Record<stri
   headers: { get: (name: string) => string | null };
 }>;
 
-export function createSapClient(conn: SapClientCallContext, fetchImpl: FetchLike = (globalThis as { fetch: FetchLike }).fetch): SapClient {
+export function createSapClient(conn: SapClientCallContext, fetchImpl: FetchLike = (api.fetch as unknown as FetchLike)): SapClient {
   const auth = basicAuthHeader(conn);
 
   async function safeJson(res: { json: () => Promise<unknown> }): Promise<unknown> {
