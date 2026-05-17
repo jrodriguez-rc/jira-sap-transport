@@ -175,6 +175,69 @@ describe('createSapClient.getTransport', () => {
   });
 });
 
+describe('parseODataError extra shapes', () => {
+  it('handles error.message as a plain string', () => {
+    const e = parseODataError(500, { error: { code: 'CX_Y', message: 'plain string here' } });
+    expect(e.code).toBe('CX_Y');
+    expect(e.message).toBe('plain string here');
+  });
+});
+
+describe('createSapClient.testConnection extra branches', () => {
+  it('returns ok:false with code BAD_SERVICE when the service root has no Request entity set', async () => {
+    server.use(
+      http.get(`${HOST}${BP}/`, () => HttpResponse.json({ '@odata.context': '$metadata', value: [] }))
+    );
+    const res = await createSapClient(conn).testConnection();
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error.code).toBe('BAD_SERVICE');
+    }
+  });
+
+  it('returns ok:false with code NETWORK when fetch itself throws', async () => {
+    const throwingFetch = async () => { throw new Error('connect timeout'); };
+    const res = await createSapClient(conn, throwingFetch as never).testConnection();
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error.code).toBe('NETWORK');
+      expect(res.error.message).toContain('connect timeout');
+    }
+  });
+});
+
+describe('createSapClient CSRF retry — negative cases', () => {
+  it('does NOT fetch CSRF token for GET 403 (no retry on safe methods)', async () => {
+    let csrfFetchCount = 0;
+    server.use(
+      http.get(`${HOST}${BP}/Request%28%27FORBID%27%29`, () => new HttpResponse(null, { status: 403 })),
+      http.get(`${HOST}${BP}/Request\\('FORBID'\\)`, () => new HttpResponse(null, { status: 403 })),
+      http.get(`${HOST}${BP}/`, ({ request }) => {
+        if (request.headers.get('x-csrf-token') === 'Fetch') {
+          csrfFetchCount += 1;
+        }
+        return HttpResponse.json(serviceRoot);
+      })
+    );
+    await expect(createSapClient(conn).getTransport('FORBID')).rejects.toMatchObject({ httpStatus: 403 });
+    expect(csrfFetchCount).toBe(0);
+  });
+
+  it('throws CSRF_FETCH_FAILED when SAP demands CSRF but the fetch returns no token', async () => {
+    server.use(
+      http.post(`${HOST}${BP}/Request/SAP__self.Create`, () =>
+        new HttpResponse(null, { status: 403, headers: { 'x-csrf-token': 'Required' } })
+      ),
+      http.get(`${HOST}${BP}/`, () =>
+        new HttpResponse(JSON.stringify(serviceRoot), { status: 200, headers: { 'content-type': 'application/json' } })
+      )
+    );
+    await expect(
+      createSapClient(conn).createTransport({ description: 'X', type: 'K', email: 'a@b.com' })
+    ).rejects.toMatchObject({ code: 'CSRF_FETCH_FAILED', httpStatus: 403 });
+  });
+});
+
 describe('createSapClient CSRF retry', () => {
   it('fetches token on 403 with x-csrf-token: Required, then retries POST with the token', async () => {
     let phase: 'first' | 'fetch' | 'retry' = 'first';

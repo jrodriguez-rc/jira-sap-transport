@@ -96,10 +96,11 @@ export function createSapClient(conn: SapClientCallContext, fetchImpl: FetchLike
 
     if (res.status === 403 && isUnsafe && res.headers.get('x-csrf-token') === 'Required') {
       csrfToken = await fetchCsrf();
-      if (csrfToken) {
-        headers['x-csrf-token'] = csrfToken;
-        res = await fetchImpl(url, { method: init?.method ?? 'GET', headers, body: bodyStr });
+      if (!csrfToken) {
+        throw new SapError({ code: 'CSRF_FETCH_FAILED', message: 'SAP required CSRF token but did not return one', severity: 'error', httpStatus: 403 });
       }
+      headers['x-csrf-token'] = csrfToken;
+      res = await fetchImpl(url, { method: init?.method ?? 'GET', headers, body: bodyStr });
     }
 
     const body = await safeJson(res);
