@@ -1,0 +1,16 @@
+modules:
+  function:
+    - key: placeholder
+      handler: index.placeholder
+app:
+  id: ari:cloud:ecosystem::app/PLACEHOLDER-WILL-BE-REPLACED-BY-FORGE-CREATE
+permissions:
+  scopes:
+    - read:jira-work
+    - read:jira-user
+    - manage:jira-configuration
+    - manage:jira-project
+    - storage:app
+  external:
+    fetch:
+      backend: []
