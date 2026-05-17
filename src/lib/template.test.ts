@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolvePath, renderRaw } from './template';
+import { resolvePath, renderRaw, render, DEFAULT_TEMPLATE, truncateTo60 } from './template';
 
 describe('resolvePath', () => {
   const ctx = {
@@ -80,5 +80,59 @@ describe('renderRaw', () => {
   it('handles multiple occurrences of the same token', () => {
     const r = renderRaw('{{issue.key}}/{{issue.key}}', ctx);
     expect(r.text).toBe('PROJ-1/PROJ-1');
+  });
+});
+
+describe('truncateTo60', () => {
+  it('keeps strings ≤60 chars untouched', () => {
+    expect(truncateTo60('a'.repeat(60))).toEqual({ text: 'a'.repeat(60), truncated: false });
+    expect(truncateTo60('short')).toEqual({ text: 'short', truncated: false });
+  });
+
+  it('cuts at last whitespace ≤60', () => {
+    const t = 'aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll mmm nnn ooo ppp'; // > 60
+    const r = truncateTo60(t);
+    expect(r.truncated).toBe(true);
+    expect(r.text.length).toBeLessThanOrEqual(60);
+    expect(t.startsWith(r.text)).toBe(true);
+    expect(r.text.endsWith(' ')).toBe(false);
+  });
+
+  it('hard-cuts at 60 when no whitespace exists in the first 60', () => {
+    const t = 'a'.repeat(80);
+    const r = truncateTo60(t);
+    expect(r.text).toBe('a'.repeat(60));
+    expect(r.truncated).toBe(true);
+  });
+});
+
+describe('render', () => {
+  const ctx = { issue: { key: 'PROJ-1', fields: { summary: 'Hello world' } } };
+
+  it('uses the default template when input is empty/whitespace', () => {
+    const r = render('', ctx);
+    expect(r.text).toBe('PROJ-1 Hello world');
+    expect(DEFAULT_TEMPLATE).toBe('{{issue.key}} {{issue.fields.summary}}');
+  });
+
+  it('returns RenderResult with length and truncated flag', () => {
+    const r = render('{{issue.key}} {{issue.fields.summary}}', ctx);
+    expect(r.text).toBe('PROJ-1 Hello world');
+    expect(r.length).toBe(18);
+    expect(r.truncated).toBe(false);
+    expect(r.warnings).toEqual([]);
+  });
+
+  it('truncates and sets the flag when the rendered text exceeds 60 chars', () => {
+    const long = { issue: { key: 'PROJ-1', fields: { summary: 'word '.repeat(20) } } };
+    const r = render('{{issue.key}} {{issue.fields.summary}}', long);
+    expect(r.text.length).toBeLessThanOrEqual(60);
+    expect(r.truncated).toBe(true);
+    expect(r.length).toBeGreaterThan(60);
+  });
+
+  it('forwards warnings from rendering', () => {
+    const r = render('{{issue.missing}}', ctx);
+    expect(r.warnings).toContain('Path "issue.missing" not found');
   });
 });

@@ -1,3 +1,5 @@
+import type { RenderResult } from './types';
+
 export function resolvePath(ctx: unknown, path: string): unknown {
   const parts = path.split('.');
   let cur: unknown = ctx;
@@ -45,4 +47,25 @@ function hasPath(ctx: unknown, path: string): boolean {
     cur = (cur as Record<string, unknown>)[part];
   }
   return true;
+}
+
+export const DEFAULT_TEMPLATE = '{{issue.key}} {{issue.fields.summary}}';
+const MAX_LEN = 60;
+
+export function truncateTo60(input: string): { text: string; truncated: boolean } {
+  if (input.length <= MAX_LEN) return { text: input, truncated: false };
+  const window = input.slice(0, MAX_LEN);
+  const lastSpace = window.lastIndexOf(' ');
+  if (lastSpace > 0) {
+    return { text: window.slice(0, lastSpace), truncated: true };
+  }
+  return { text: window, truncated: true };
+}
+
+export function render(template: string, ctx: unknown): RenderResult {
+  const effective = template.trim().length === 0 ? DEFAULT_TEMPLATE : template;
+  const { text: raw, warnings } = renderRaw(effective, ctx);
+  const length = raw.length;
+  const { text, truncated } = truncateTo60(raw);
+  return { text, length, warnings, truncated };
 }
