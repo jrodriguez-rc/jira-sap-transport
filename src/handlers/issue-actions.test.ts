@@ -97,6 +97,30 @@ describe('createTransportResolver', () => {
       context: { accountId: 'acc1' }
     })).rejects.toThrow(/connection/i);
   });
+
+  it('rejects when project config has no connectionId or override', async () => {
+    appStore.set('project:10001:config', { projectCode: 'PRJX', descriptionTemplate: '', defaults: { type: 'K', target: 'QAS' } });
+    await expect(createTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      context: { accountId: 'acc1' }
+    })).rejects.toThrow(/No SAP connection configured/);
+  });
+
+  it('rejects when referenced connection is missing from storage', async () => {
+    appStore.delete('connections:c1');
+    await expect(createTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      context: { accountId: 'acc1' }
+    })).rejects.toThrow(/does not exist/);
+  });
+
+  it('uses descriptionOverride when non-empty', async () => {
+    const r = await createTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K', descriptionOverride: 'Custom desc' },
+      context: { accountId: 'acc1' }
+    });
+    expect(r.requestId).toBe('DEVK900123');
+  });
 });
 
 describe('linkTransportResolver', () => {
@@ -130,6 +154,14 @@ describe('releaseTransportResolver', () => {
     expect(list[0].status).toBe('R');
     expect(list[0].releasedAt).toBeTruthy();
   });
+
+  it('logs and rethrows when project has no configured connection', async () => {
+    appStore.delete('project:10001:config');
+    await expect(releaseTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', requestId: 'DEVK900123' },
+      context: { accountId: 'acc1' }
+    })).rejects.toThrow(/connection/i);
+  });
 });
 
 describe('refreshTransportResolver', () => {
@@ -142,6 +174,14 @@ describe('refreshTransportResolver', () => {
     expect(r.status).toBe('D');
     const list = issueProps.get('PROJ-1') as Array<{ status: string }>;
     expect(list[0].status).toBe('D');
+  });
+
+  it('logs and rethrows when SAP says not found', async () => {
+    issueProps.set('PROJ-1', [{ requestId: 'NOPE', type: 'K', target: 'QAS', description: 'x', createdAt: '2026-01-01', status: 'D', statusText: 'm' }]);
+    await expect(refreshTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', requestId: 'NOPE' },
+      context: { accountId: 'acc1' }
+    })).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });
 

@@ -12,7 +12,8 @@ export default defineConfig({
         'src/**/*.test.{ts,tsx}',
         'src/**/index.ts',
         'src/lib/types.ts',
-        'src/__tests__/**'
+        'src/__tests__/**',
+        'src/frontend/**'
       ],
       thresholds: {
         statements: 90,

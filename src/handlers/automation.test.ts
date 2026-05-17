@@ -42,10 +42,15 @@ vi.mock('../lib/sap-client', () => ({
       Request: 'DEVK900123', Description: 'x', Owner: 'JAIME', Type: 'K', TypeText: 'Workbench',
       Target: 'QAS', Status: 'D', StatusText: 'Modifiable', SAP__Messages: []
     })),
-    releaseTransport: vi.fn(async (id: string) => ({
-      Request: id, Description: 'x', Owner: 'JAIME', Type: 'K', TypeText: 'Workbench',
-      Target: 'QAS', Status: 'R', StatusText: 'Released', SAP__Messages: []
-    })),
+    releaseTransport: vi.fn(async (id: string) => {
+      if (id === 'BAD_PLAIN') throw 'plain string error';
+      if (id === 'BAD_SAP') {
+        const { SapError } = await import('../lib/errors');
+        throw new SapError({ code: 'SAP', message: 'release failed', severity: 'error' });
+      }
+      return { Request: id, Description: 'x', Owner: 'JAIME', Type: 'K', TypeText: 'Workbench',
+        Target: 'QAS', Status: 'R', StatusText: 'Released', SAP__Messages: [] };
+    }),
     getTransport: vi.fn(async (id: string) => ({
       Request: id, Description: 'x', Owner: 'JAIME', Type: 'K', TypeText: 'Workbench',
       Target: 'QAS', Status: 'D', StatusText: 'Modifiable', SAP__Messages: []
@@ -114,5 +119,51 @@ describe('automationRelease', () => {
     ]);
     const r = await automationRelease({ payload: { projectId: '10001', issueKey: 'PROJ-1', mode: 'all-linked', onlyType: 'W' }, context: {} });
     expect(r.released).toEqual(['B']);
+  });
+
+  it('collects failures (SapError formatted as "CODE: msg")', async () => {
+    issueProps.set('PROJ-1', [
+      { requestId: 'BAD_SAP', type: 'K', target: 'QAS', description: 'x', createdAt: '2026-01-01', status: 'D', statusText: 'm' }
+    ]);
+    const r = await automationRelease({ payload: { projectId: '10001', issueKey: 'PROJ-1', mode: 'by-id', requestId: 'BAD_SAP' }, context: {} });
+    expect(r.released).toEqual([]);
+    expect(r.failed).toEqual([{ requestId: 'BAD_SAP', error: 'SAP: release failed' }]);
+  });
+
+  it('collects failures from non-Error throws via String(e) fallback', async () => {
+    issueProps.set('PROJ-1', [
+      { requestId: 'BAD_PLAIN', type: 'K', target: 'QAS', description: 'x', createdAt: '2026-01-01', status: 'D', statusText: 'm' }
+    ]);
+    const r = await automationRelease({ payload: { projectId: '10001', issueKey: 'PROJ-1', mode: 'by-id', requestId: 'BAD_PLAIN' }, context: {} });
+    expect(r.failed).toEqual([{ requestId: 'BAD_PLAIN', error: 'plain string error' }]);
+  });
+
+  it('throws when mode=by-id without requestId', async () => {
+    issueProps.set('PROJ-1', []);
+    await expect(automationRelease({ payload: { projectId: '10001', issueKey: 'PROJ-1', mode: 'by-id' }, context: {} }))
+      .rejects.toThrow(/requestId required/);
+  });
+
+  it('latest on empty list yields nothing', async () => {
+    issueProps.set('PROJ-1', []);
+    const r = await automationRelease({ payload: { projectId: '10001', issueKey: 'PROJ-1', mode: 'latest' }, context: {} });
+    expect(r.released).toEqual([]);
+    expect(r.skipped).toEqual([]);
+  });
+});
+
+describe('automationCreate / automationLink error paths', () => {
+  it('automationCreate returns error string when resolver throws', async () => {
+    appStore.delete('project:10001:config');
+    const r = await automationCreate({ payload: { projectId: '10001', issueKey: 'PROJ-1', email: 'a@b.com', type: 'K' }, context: { accountId: 'acc' } });
+    expect(r.sapTransport.requestId).toBe('');
+    expect(r.sapTransport.error).toMatch(/configur/i);
+  });
+
+  it('automationLink returns error string when resolver throws', async () => {
+    appStore.delete('project:10001:config');
+    const r = await automationLink({ payload: { projectId: '10001', issueKey: 'PROJ-1', requestId: 'X' }, context: {} });
+    expect(r.sapTransport.requestId).toBe('');
+    expect(r.sapTransport.error).toMatch(/configur/i);
   });
 });
