@@ -1,6 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { buildUrl, basicAuthHeader, BASE_PATH, parseODataError, mapSapMessages } from './sap-client';
 import { SapError } from './errors';
+import { setupServer } from 'msw/node';
+import { http, HttpResponse } from 'msw';
+import { afterAll, afterEach, beforeAll } from 'vitest';
+import { createSapClient, BASE_PATH as BP } from './sap-client';
+import createOk from '../__tests__/fixtures/create-ok.json';
+import releaseOk from '../__tests__/fixtures/release-ok.json';
+import releaseWarning from '../__tests__/fixtures/release-warning.json';
+import createError from '../__tests__/fixtures/create-error.json';
+import get404 from '../__tests__/fixtures/get-404.json';
+import serviceRoot from '../__tests__/fixtures/service-root.json';
 
 describe('buildUrl', () => {
   const conn = { hostname: 'https://dev.sap.lan', client: '100', username: 'u', password: 'p' };
@@ -71,5 +81,96 @@ describe('mapSapMessages', () => {
     ];
     const out = mapSapMessages(ms);
     expect(out.map((m) => m.severity)).toEqual(['info', 'warning', 'error', 'error']);
+  });
+});
+
+const HOST = 'https://dev.sap.lan';
+const CLIENT = '100';
+
+const handlers = [
+  http.get(`${HOST}${BP}/`, ({ request }) => {
+    const u = new URL(request.url);
+    if (u.searchParams.get('sap-client') !== CLIENT) return new HttpResponse(null, { status: 400 });
+    return HttpResponse.json(serviceRoot);
+  }),
+  http.post(`${HOST}${BP}/Request/SAP__self.Create`, async ({ request }) => {
+    const u = new URL(request.url);
+    if (u.searchParams.get('sap-client') !== CLIENT) return new HttpResponse(null, { status: 400 });
+    const body = (await request.json()) as { Target?: string };
+    if (body.Target === 'BAD') return HttpResponse.json(createError, { status: 400 });
+    return HttpResponse.json(createOk, { status: 201 });
+  }),
+  http.post(`${HOST}${BP}/Request\\('DEVK900123'\\)/SAP__self.Release`, () => HttpResponse.json(releaseOk)),
+  http.post(`${HOST}${BP}/Request\\('DEVK900999'\\)/SAP__self.Release`, () => HttpResponse.json(releaseWarning)),
+  http.get(`${HOST}${BP}/Request\\('DEVK900123'\\)`, () => HttpResponse.json(createOk)),
+  http.get(`${HOST}${BP}/Request\\('NOPE'\\)`, () => HttpResponse.json(get404, { status: 404 })),
+  http.get(`${HOST}${BP}/Request\\('UNAUTHZ'\\)`, () => HttpResponse.json({}, { status: 401 }))
+];
+
+const server = setupServer(...handlers);
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
+const conn = { hostname: HOST, client: CLIENT, username: 'u', password: 'p' };
+
+describe('createSapClient.testConnection', () => {
+  it('returns ok:true on a valid service-root response', async () => {
+    const client = createSapClient(conn);
+    expect(await client.testConnection()).toEqual({ ok: true });
+  });
+});
+
+describe('createSapClient.createTransport', () => {
+  it('creates a transport and returns the entity', async () => {
+    const client = createSapClient(conn);
+    const r = await client.createTransport({ description: 'PROJ-1 Hello', type: 'K', email: 'a@b.com', target: 'QAS' });
+    expect(r.Request).toBe('DEVK900123');
+    expect(r.Status).toBe('D');
+  });
+
+  it('throws SapError parsed from the OData response on 4xx', async () => {
+    const client = createSapClient(conn);
+    await expect(
+      client.createTransport({ description: 'X', type: 'K', email: 'a@b.com', target: 'BAD' })
+    ).rejects.toMatchObject({ code: 'INVALID_TARGET', httpStatus: 400 });
+  });
+
+  it('throws RangeError when description exceeds 60 chars', async () => {
+    const client = createSapClient(conn);
+    await expect(
+      client.createTransport({ description: 'a'.repeat(61), type: 'K', email: 'a@b.com' })
+    ).rejects.toBeInstanceOf(RangeError);
+  });
+});
+
+describe('createSapClient.releaseTransport', () => {
+  it('returns the entity on success', async () => {
+    const r = await createSapClient(conn).releaseTransport('DEVK900123');
+    expect(r.Status).toBe('R');
+  });
+
+  it('still resolves with warnings in SAP__Messages', async () => {
+    const r = await createSapClient(conn).releaseTransport('DEVK900999');
+    expect(r.SAP__Messages?.[0].numericSeverity).toBe(2);
+  });
+});
+
+describe('createSapClient.getTransport', () => {
+  it('returns the entity', async () => {
+    const r = await createSapClient(conn).getTransport('DEVK900123');
+    expect(r.Request).toBe('DEVK900123');
+  });
+
+  it('throws SapError on 404', async () => {
+    await expect(createSapClient(conn).getTransport('NOPE')).rejects.toMatchObject({
+      code: 'NOT_FOUND', httpStatus: 404
+    });
+  });
+
+  it('throws SapError with code AUTH on 401', async () => {
+    await expect(createSapClient(conn).getTransport('UNAUTHZ')).rejects.toMatchObject({
+      code: 'AUTH', httpStatus: 401
+    });
   });
 });

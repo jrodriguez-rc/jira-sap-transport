@@ -1,5 +1,5 @@
 import { SapError, type SapErrorSeverity } from './errors';
-import type { SapClientCallContext, SapMessage } from './types';
+import type { RequestType, SapClientCallContext, SapMessage, TransportType } from './types';
 
 export const BASE_PATH =
   '/sap/opu/odata4/sap/zjira_api_transportrequest_o4/srvd_a2x/sap/zjira_api_transportrequest_o4/0001';
@@ -47,4 +47,85 @@ export function mapSapMessages(messages: SapMessage[]): Array<{
     target: m.target,
     severity: m.numericSeverity === 1 ? 'info' : m.numericSeverity === 2 ? 'warning' : 'error'
   }));
+}
+
+export interface SapClient {
+  testConnection(): Promise<{ ok: true } | { ok: false; error: SapError }>;
+  createTransport(input: { description: string; type: TransportType; email: string; target?: string }): Promise<RequestType>;
+  releaseTransport(requestId: string): Promise<RequestType>;
+  getTransport(requestId: string): Promise<RequestType>;
+}
+
+type FetchLike = (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{
+  status: number;
+  json: () => Promise<unknown>;
+  headers: { get: (name: string) => string | null };
+}>;
+
+export function createSapClient(conn: SapClientCallContext, fetchImpl: FetchLike = (globalThis as { fetch: FetchLike }).fetch): SapClient {
+  const auth = basicAuthHeader(conn);
+
+  async function safeJson(res: { json: () => Promise<unknown> }): Promise<unknown> {
+    try { return await res.json(); } catch { return {}; }
+  }
+
+  async function callJson(path: string, init?: { method?: string; body?: unknown }): Promise<{ status: number; body: unknown }> {
+    const url = buildUrl(conn, path);
+    const headers: Record<string, string> = {
+      Authorization: auth,
+      Accept: 'application/json'
+    };
+    let bodyStr: string | undefined;
+    if (init?.body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+      bodyStr = JSON.stringify(init.body);
+    }
+    const res = await fetchImpl(url, { method: init?.method ?? 'GET', headers, body: bodyStr });
+    const body = await safeJson(res);
+    return { status: res.status, body };
+  }
+
+  return {
+    async testConnection() {
+      try {
+        const { status, body } = await callJson('/');
+        if (status !== 200) return { ok: false as const, error: parseODataError(status, body) };
+        const list = (body as { value?: Array<{ name: string }> }).value ?? [];
+        if (!list.some((e) => e.name === 'Request')) {
+          return { ok: false as const, error: new SapError({ code: 'BAD_SERVICE', message: 'Service root missing Request entity set', severity: 'error', httpStatus: 200 }) };
+        }
+        return { ok: true as const };
+      } catch (e) {
+        return { ok: false as const, error: new SapError({ code: 'NETWORK', message: (e as Error).message, severity: 'error' }) };
+      }
+    },
+
+    async createTransport(input) {
+      if (input.description.length > 60) {
+        throw new RangeError(`description exceeds 60 chars (${input.description.length}); truncate before calling sap-client`);
+      }
+      const payload: Record<string, string> = {
+        Description: input.description,
+        Type: input.type,
+        Email: input.email
+      };
+      if (input.target) payload.Target = input.target;
+      const { status, body } = await callJson('/Request/SAP__self.Create', { method: 'POST', body: payload });
+      if (status >= 400) throw parseODataError(status, body);
+      return body as RequestType;
+    },
+
+    async releaseTransport(requestId) {
+      const { status, body } = await callJson(`/Request('${encodeURIComponent(requestId)}')/SAP__self.Release`, { method: 'POST', body: {} });
+      if (status >= 400) throw parseODataError(status, body);
+      return body as RequestType;
+    },
+
+    async getTransport(requestId) {
+      const path = `/Request('${encodeURIComponent(requestId)}')?$select=Request,Description,Owner,Type,TypeText,Target,Status,StatusText`;
+      const { status, body } = await callJson(path);
+      if (status >= 400) throw parseODataError(status, body);
+      return body as RequestType;
+    }
+  };
 }
