@@ -1,5 +1,7 @@
 # Jira–SAP Transport Connector Implementation Plan
 
+> **Nota / Note:** This is the historical implementation plan (TDD task list) used by the agentic workers during the build. Already executed. For user/developer documentation see the bilingual READMEs (`README.md` / `README.es.md`) and the bilingual design spec (`docs/superpowers/specs/...-design.md` / `...-design.es.md`).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build an Atlassian Forge app that lets Jira Cloud users and Automation rules create, link and release SAP transport requests against a custom OData v4 service.

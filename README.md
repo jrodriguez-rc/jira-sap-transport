@@ -1,5 +1,7 @@
 # Jira–SAP Transport Connector
 
+*[Español](./README.es.md) · **English***
+
 Forge app that creates, links and releases SAP transport requests from Jira issues and Jira Automation rules.
 
 ## Develop
