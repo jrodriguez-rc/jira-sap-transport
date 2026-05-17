@@ -144,6 +144,63 @@ const App: React.FC = () => {
           }}
         />
       )}
+      {cfg.connectionOverride && (
+        <Stack space="space.100">
+          <Label labelFor="ov-hostname">Hostname (https URL)</Label>
+          <Textfield
+            value={cfg.connectionOverride.hostname}
+            onChange={(e) =>
+              setCfg({
+                ...cfg,
+                connectionOverride: {
+                  ...cfg.connectionOverride!,
+                  hostname: (e.target as { value?: string }).value ?? '',
+                },
+              })
+            }
+          />
+          <Label labelFor="ov-client">Client (3 digits)</Label>
+          <Textfield
+            value={cfg.connectionOverride.client}
+            onChange={(e) =>
+              setCfg({
+                ...cfg,
+                connectionOverride: {
+                  ...cfg.connectionOverride!,
+                  client: (e.target as { value?: string }).value ?? '',
+                },
+              })
+            }
+          />
+          <Label labelFor="ov-username">Username</Label>
+          <Textfield
+            value={cfg.connectionOverride.username}
+            onChange={(e) =>
+              setCfg({
+                ...cfg,
+                connectionOverride: {
+                  ...cfg.connectionOverride!,
+                  username: (e.target as { value?: string }).value ?? '',
+                },
+              })
+            }
+          />
+          <Label labelFor="ov-password">Password</Label>
+          <Textfield
+            type="password"
+            value={cfg.connectionOverride.password}
+            onChange={(e) =>
+              setCfg({
+                ...cfg,
+                connectionOverride: {
+                  ...cfg.connectionOverride!,
+                  password: (e.target as { value?: string }).value ?? '',
+                },
+              })
+            }
+          />
+        </Stack>
+      )}
 
       <Label labelFor="project-code">Project code</Label>
       <Textfield
