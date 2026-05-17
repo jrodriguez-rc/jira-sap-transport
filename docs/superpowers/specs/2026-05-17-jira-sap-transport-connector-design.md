@@ -1,5 +1,7 @@
 # Jira ↔ SAP Transport Connector — Design
 
+*[Español](./2026-05-17-jira-sap-transport-connector-design.es.md) · **English***
+
 **Date:** 2026-05-17
 **Status:** Draft for review
 **Platform:** Atlassian Forge (Jira Cloud)

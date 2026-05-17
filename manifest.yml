@@ -1,0 +1,82 @@
+modules:
+  jira:adminPage:
+    - key: sap-admin-page
+      title: SAP Transport — Connections
+      icon: https://developer.atlassian.com/platform/forge/images/icons/configure.svg
+      resource: admin-ui
+      resolver:
+        function: resolver
+  jira:projectSettingsPage:
+    - key: sap-project-settings
+      title: SAP Transport
+      resource: project-settings-ui
+      resolver:
+        function: resolver
+  jira:issuePanel:
+    - key: sap-issue-panel
+      title: SAP Transport
+      resource: issue-panel-ui
+      resolver:
+        function: resolver
+  jira:jiraAutomationAction:
+    - key: create-sap-transport
+      name: Create SAP Transport
+      function: automation-create
+      actionVerb: CREATE
+      config:
+        view:
+          resource: automation-create-ui
+    - key: release-sap-transport
+      name: Release SAP Transport
+      function: automation-release
+      actionVerb: ACT
+      config:
+        view:
+          resource: automation-release-ui
+    - key: link-sap-transport
+      name: Link Existing SAP Transport
+      function: automation-link
+      actionVerb: ACT
+      config:
+        view:
+          resource: automation-link-ui
+  function:
+    - key: resolver
+      handler: index.handler
+    - key: automation-create
+      handler: index.automationCreateHandler
+    - key: automation-release
+      handler: index.automationReleaseHandler
+    - key: automation-link
+      handler: index.automationLinkHandler
+
+resources:
+  - key: admin-ui
+    path: src/frontend/admin-page.tsx
+  - key: project-settings-ui
+    path: src/frontend/project-settings.tsx
+  - key: issue-panel-ui
+    path: src/frontend/issue-panel.tsx
+  - key: automation-create-ui
+    path: src/frontend/automation-create-config.tsx
+  - key: automation-release-ui
+    path: src/frontend/automation-release-config.tsx
+  - key: automation-link-ui
+    path: src/frontend/automation-link-config.tsx
+
+app:
+  id: ari:cloud:ecosystem::app/REPLACE-WITH-FORGE-CREATE
+  runtime:
+    name: nodejs20.x
+
+permissions:
+  scopes:
+    - read:jira-work
+    - read:jira-user
+    - manage:jira-configuration
+    - manage:jira-project
+    - storage:app
+  external:
+    fetch:
+      backend:
+        - 'https://*'
