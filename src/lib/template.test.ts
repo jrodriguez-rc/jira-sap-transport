@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolvePath } from './template';
+import { resolvePath, renderRaw } from './template';
 
 describe('resolvePath', () => {
   const ctx = {
@@ -34,5 +34,51 @@ describe('resolvePath', () => {
   it('returns objects/arrays as-is (caller decides what to do)', () => {
     expect(resolvePath(ctx, 'issue.fields.labels')).toEqual(['a', 'b']);
     expect(resolvePath(ctx, 'issue.fields')).toEqual(ctx.issue.fields);
+  });
+});
+
+describe('renderRaw', () => {
+  const ctx = {
+    issue: { key: 'PROJ-1', fields: { summary: 'Hi', missing: undefined, weird: { x: 1 } } },
+    user: { email: 'a@b.com' }
+  };
+
+  it('substitutes {{path}} tokens', () => {
+    const r = renderRaw('{{issue.key}} - {{issue.fields.summary}}', ctx);
+    expect(r.text).toBe('PROJ-1 - Hi');
+    expect(r.warnings).toEqual([]);
+  });
+
+  it('emits warning and empty string for missing paths', () => {
+    const r = renderRaw('A {{issue.fields.nope}} B', ctx);
+    expect(r.text).toBe('A  B');
+    expect(r.warnings).toEqual(['Path "issue.fields.nope" not found']);
+  });
+
+  it('emits warning and empty string for non-scalar values', () => {
+    const r = renderRaw('X {{issue.fields.weird}} Y', ctx);
+    expect(r.text).toBe('X  Y');
+    expect(r.warnings).toEqual(['Path "issue.fields.weird" resolves to non-scalar value']);
+  });
+
+  it('coerces numbers and booleans to strings', () => {
+    const r = renderRaw('{{n}} {{b}}', { n: 42, b: true });
+    expect(r.text).toBe('42 true');
+  });
+
+  it('treats null/undefined as empty string without warning when path exists but is null', () => {
+    const r = renderRaw('X{{v}}Y', { v: null });
+    expect(r.text).toBe('XY');
+    expect(r.warnings).toEqual([]);
+  });
+
+  it('preserves literal text outside of tokens', () => {
+    const r = renderRaw('hello world', ctx);
+    expect(r.text).toBe('hello world');
+  });
+
+  it('handles multiple occurrences of the same token', () => {
+    const r = renderRaw('{{issue.key}}/{{issue.key}}', ctx);
+    expect(r.text).toBe('PROJ-1/PROJ-1');
   });
 });
