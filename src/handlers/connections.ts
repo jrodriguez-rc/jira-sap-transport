@@ -1,14 +1,13 @@
 // src/handlers/connections.ts
 import { listConnections, saveConnection, deleteConnection, toPublic } from '../lib/storage';
 import { createSapClient } from '../lib/sap-client';
-import { isValidSlotKey } from '../lib/types';
 import type { Connection } from '../lib/types';
 
 interface ResolverArgs<P = unknown> { payload: P; context: unknown }
 
 function validateConnection(c: Partial<Connection>): asserts c is Omit<Connection, 'id'> {
-  if (!c.slotKey || !isValidSlotKey(c.slotKey)) {
-    throw new Error('slotKey must be one of sap-backend-1 ... sap-backend-25');
+  if (!c.hostname || !/^https:\/\/.+/.test(c.hostname)) {
+    throw new Error('hostname must be an https URL');
   }
   if (!c.client || !/^\d{3}$/.test(c.client)) {
     throw new Error('client must be exactly 3 digits');
@@ -30,7 +29,7 @@ export async function saveConnectionResolver(args: ResolverArgs<Partial<Connecti
   const conn: Connection = {
     id,
     label: args.payload.label,
-    slotKey: args.payload.slotKey,
+    hostname: args.payload.hostname,
     client: args.payload.client,
     username: args.payload.username,
     password: args.payload.password
@@ -44,9 +43,9 @@ export async function deleteConnectionResolver(args: ResolverArgs<{ id: string }
   return { ok: true };
 }
 
-export async function testConnectionResolver(args: ResolverArgs<{ slotKey: string; client: string; username: string; password: string }>) {
-  if (!isValidSlotKey(args.payload.slotKey)) {
-    return { ok: false as const, error: { code: 'INVALID_SLOT', message: 'slotKey must be one of sap-backend-1 ... sap-backend-25', severity: 'error' as const } };
+export async function testConnectionResolver(args: ResolverArgs<{ hostname: string; client: string; username: string; password: string }>) {
+  if (!args.payload.hostname || !/^https:\/\/.+/.test(args.payload.hostname)) {
+    return { ok: false as const, error: { code: 'INVALID_HOSTNAME', message: 'hostname must be an https URL', severity: 'error' as const } };
   }
   const client = createSapClient(args.payload);
   return client.testConnection();

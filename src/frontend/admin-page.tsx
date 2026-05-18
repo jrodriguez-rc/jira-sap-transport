@@ -11,7 +11,6 @@ import ForgeReconciler, {
   Inline,
   Label,
   SectionMessage,
-  Select,
   Stack,
   Text,
   Textfield,
@@ -19,15 +18,10 @@ import ForgeReconciler, {
 } from '@forge/react';
 import { invoke } from '@forge/bridge';
 
-const SLOT_OPTIONS = Array.from({ length: 25 }, (_v, i) => {
-  const v = `sap-backend-${i + 1}`;
-  return { label: `Slot ${i + 1} (${v})`, value: v };
-});
-
 interface ConnPublic {
   id: string;
   label: string;
-  slotKey: string;
+  hostname: string;
   client: string;
   username: string;
 }
@@ -106,7 +100,7 @@ export const App: React.FC = () => {
   const head = {
     cells: [
       { key: 'label', content: 'Label' },
-      { key: 'slotKey', content: 'Slot' },
+      { key: 'hostname', content: 'Hostname' },
       { key: 'client', content: 'Client' },
       { key: 'username', content: 'User' },
       { key: 'actions', content: 'Actions' },
@@ -117,7 +111,7 @@ export const App: React.FC = () => {
     key: c.id,
     cells: [
       { key: 'label', content: <Text>{c.label}</Text> },
-      { key: 'slotKey', content: <Text>{c.slotKey}</Text> },
+      { key: 'hostname', content: <Text>{c.hostname}</Text> },
       { key: 'client', content: <Text>{c.client}</Text> },
       { key: 'username', content: <Text>{c.username}</Text> },
       {
@@ -180,14 +174,11 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ initial, onSubmi
         <FormSection>
           <Label labelFor="label">Label</Label>
           <Textfield {...register('label', { required: true })} />
-          <Label labelFor="slotKey">Backend slot</Label>
-          <Select
-            {...register('slotKey')}
-            options={SLOT_OPTIONS}
+          <Label labelFor="hostname">Hostname (https URL)</Label>
+          <Textfield
+            placeholder="https://sap.example.com"
+            {...register('hostname', { required: true })}
           />
-          <Text>
-            Configure each slot's URL at <strong>Apps → Manage apps → SAP Transport → App access</strong> (Atlassian's native UI).
-          </Text>
           <Label labelFor="client">Client (3 digits)</Label>
           <Textfield {...register('client', { required: true })} />
           <Label labelFor="username">Username</Label>

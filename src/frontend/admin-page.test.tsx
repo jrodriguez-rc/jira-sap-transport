@@ -47,7 +47,7 @@ const fail = (message: string, code = 'ERR') => ({
 });
 
 const sampleConnections = [
-  { id: 'sap-dev', label: 'SAP Dev', slotKey: 'sap-backend-1', client: '100', username: 'user1' },
+  { id: 'sap-dev', label: 'SAP Dev', hostname: 'https://dev.sap.example', client: '100', username: 'user1' },
 ];
 
 beforeEach(() => {
@@ -72,7 +72,7 @@ describe('admin-page App', () => {
     });
     render(<App />);
     await screen.findByText('SAP Dev');
-    expect(screen.getByText('sap-backend-1')).toBeInTheDocument();
+    expect(screen.getByText('https://dev.sap.example')).toBeInTheDocument();
     expect(screen.getByText('100')).toBeInTheDocument();
     expect(screen.getByText('user1')).toBeInTheDocument();
   });
@@ -98,7 +98,7 @@ describe('admin-page App', () => {
     expect(await screen.findByTitle('New connection')).toBeInTheDocument();
     // 'Label' also appears as the table column header, so scope this check to
     // the form's own Label elements.
-    expect(screen.getByText('Backend slot')).toBeInTheDocument();
+    expect(screen.getByText('Hostname (https URL)')).toBeInTheDocument();
     expect(screen.getByText('Password')).toBeInTheDocument();
   });
 
@@ -114,16 +114,14 @@ describe('admin-page App', () => {
     await user.click(screen.getByText('+ Add connection'));
 
     // useForm registers controlled-ish inputs; user.type fires onChange per char.
-    // After dropping the hostname textfield (replaced by a slotKey Select), the
-    // form has 3 textboxes (label, client, username) + 1 password input.
-    // The slotKey Select renders as a non-input string tag and is not exercised
-    // here, so we don't assert on slotKey contents in the saved payload.
+    // Form has 4 textboxes (label, hostname, client, username) + 1 password input.
     const textboxes = await screen.findAllByRole('textbox');
-    expect(textboxes.length).toBeGreaterThanOrEqual(3);
+    expect(textboxes.length).toBeGreaterThanOrEqual(4);
 
     await user.type(textboxes[0], 'My SAP');
-    await user.type(textboxes[1], '100');
-    await user.type(textboxes[2], 'user1');
+    await user.type(textboxes[1], 'https://my.sap.example');
+    await user.type(textboxes[2], '100');
+    await user.type(textboxes[3], 'user1');
     const passwordInput = document.querySelector('input[type="password"]') as HTMLInputElement;
     await user.type(passwordInput, 'pw');
 
@@ -134,6 +132,7 @@ describe('admin-page App', () => {
       expect(saveCall).toBeDefined();
       expect(saveCall![1]).toMatchObject({
         label: 'My SAP',
+        hostname: 'https://my.sap.example',
         client: '100',
         username: 'user1',
         password: 'pw',
@@ -204,8 +203,9 @@ describe('admin-page App', () => {
     await screen.findByTitle('New connection');
     const inputs = await screen.findAllByRole('textbox');
     await userEvent.type(inputs[0], 'X');
-    await userEvent.type(inputs[1], 'X');
+    await userEvent.type(inputs[1], 'https://x');
     await userEvent.type(inputs[2], 'X');
+    await userEvent.type(inputs[3], 'X');
     const pw = document.querySelector('input[type="password"]') as HTMLInputElement;
     await userEvent.type(pw, 'X');
     await user.click(screen.getByText('Save'));
@@ -241,8 +241,9 @@ describe('admin-page App', () => {
     await screen.findByTitle('New connection');
     const inputs = await screen.findAllByRole('textbox');
     await user.type(inputs[0], 'X');
-    await user.type(inputs[1], 'X');
+    await user.type(inputs[1], 'https://x');
     await user.type(inputs[2], 'X');
+    await user.type(inputs[3], 'X');
     const pw = document.querySelector('input[type="password"]') as HTMLInputElement;
     await user.type(pw, 'X');
     await user.click(screen.getByText('Save'));

@@ -121,7 +121,7 @@ describe('project-settings App', () => {
     await screen.findByText('SAP Transport — Project Settings');
   });
 
-  it('toggling the radio to Override reveals the slot/client/username/password form', async () => {
+  it('toggling the radio to Override reveals the hostname/client/username/password form', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'connections.list') return ok([]);
       if (key === 'project.getConfig') {
@@ -139,7 +139,7 @@ describe('project-settings App', () => {
     const overrideRadio = screen.getByLabelText('Override') as HTMLInputElement;
     expect(overrideRadio.checked).toBe(false);
     await user.click(overrideRadio);
-    await screen.findByText('Backend slot');
+    await screen.findByText('Hostname (https URL)');
     expect(screen.getByText('Client (3 digits)')).toBeInTheDocument();
     expect(screen.getByText('Username')).toBeInTheDocument();
     expect(screen.getByText('Password')).toBeInTheDocument();
@@ -256,18 +256,20 @@ describe('project-settings App', () => {
     render(<App />);
     await screen.findByDisplayValue('PROJ');
     await user.click(screen.getByLabelText('Override'));
-    await screen.findByText('Backend slot');
-    // After toggling to override, three textbox inputs appear (client, username,
-    // project code/default target also exist) plus a password input. The slotKey
-    // is a Select (non-input), not exercised here.
+    await screen.findByText('Hostname (https URL)');
+    // After toggling to override, four textbox inputs appear (hostname, client,
+    // username, project code/default target also exist) plus a password input.
     const inputs = screen.getAllByRole('textbox') as HTMLInputElement[];
-    // inputs (in render order): [client, username, project code, default target]
-    const clientInput = inputs[0];
-    const usernameInput = inputs[1];
+    // inputs (in render order): [hostname, client, username, project code, default target]
+    const hostnameInput = inputs[0];
+    const clientInput = inputs[1];
+    const usernameInput = inputs[2];
     const passwordInput = document.querySelector('input[type="password"]') as HTMLInputElement;
+    await user.type(hostnameInput, 'https://my.sap');
     await user.type(clientInput, '100');
     await user.type(usernameInput, 'jdoe');
     await user.type(passwordInput, 'pw');
+    expect(hostnameInput.value).toBe('https://my.sap');
     expect(clientInput.value).toBe('100');
     expect(usernameInput.value).toBe('jdoe');
     expect(passwordInput.value).toBe('pw');
@@ -385,7 +387,7 @@ describe('project-settings App', () => {
           connectionOverride: {
             id: 'override',
             label: 'override',
-            slotKey: 'sap-backend-3',
+            hostname: 'https://existing.sap.example',
             client: '100',
             username: 'usr-existing',
             password: 'p',
