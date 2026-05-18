@@ -65,7 +65,7 @@ resources:
     path: src/frontend/automation-link-config.tsx
 
 app:
-  id: ari:cloud:ecosystem::app/REPLACE-WITH-FORGE-CREATE
+  id: ari:cloud:ecosystem::app/848cbd63-7137-4183-abe7-bf3262757e22
   runtime:
     name: nodejs20.x
 
@@ -78,5 +78,10 @@ permissions:
     - storage:app
   external:
     fetch:
+      # The SAP hostname is configured per-installation by admins via the
+      # connection catalog (admin page). It is not knowable at build time and
+      # varies between customer environments, so we declare the wildcard here.
+      # Outbound calls are still authenticated (Basic auth) and routed through
+      # Forge's egress proxy.
       backend:
         - 'https://*'
