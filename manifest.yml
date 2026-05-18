@@ -25,23 +25,14 @@ modules:
       name: Create SAP Transport
       function: automation-create
       actionVerb: CREATE
-      config:
-        view:
-          resource: automation-create-ui
     - key: release-sap-transport
       name: Release SAP Transport
       function: automation-release
       actionVerb: ACT
-      config:
-        view:
-          resource: automation-release-ui
     - key: link-sap-transport
       name: Link Existing SAP Transport
       function: automation-link
       actionVerb: ACT
-      config:
-        view:
-          resource: automation-link-ui
   function:
     - key: resolver
       handler: index.handler
@@ -54,22 +45,16 @@ modules:
 
 resources:
   - key: admin-ui
-    path: src/frontend/admin-page.tsx
+    path: src/frontend/admin-page
   - key: project-settings-ui
-    path: src/frontend/project-settings.tsx
+    path: src/frontend/project-settings
   - key: issue-panel-ui
-    path: src/frontend/issue-panel.tsx
-  - key: automation-create-ui
-    path: src/frontend/automation-create-config.tsx
-  - key: automation-release-ui
-    path: src/frontend/automation-release-config.tsx
-  - key: automation-link-ui
-    path: src/frontend/automation-link-config.tsx
+    path: src/frontend/issue-panel
 
 app:
   id: ari:cloud:ecosystem::app/848cbd63-7137-4183-abe7-bf3262757e22
   runtime:
-    name: nodejs20.x
+    name: nodejs22.x
 
 permissions:
   scopes:
