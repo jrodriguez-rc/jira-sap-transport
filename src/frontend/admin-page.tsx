@@ -32,7 +32,7 @@ type ResolverResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: { code: string; message: string; severity?: string; target?: string; httpStatus?: number } };
 
-const App: React.FC = () => {
+export const App: React.FC = () => {
   const [items, setItems] = useState<ConnPublic[]>([]);
   const [editing, setEditing] = useState<EditingConn | null>(null);
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
@@ -162,7 +162,7 @@ interface ConnectionFormProps {
   onCancel: () => void;
 }
 
-const ConnectionForm: React.FC<ConnectionFormProps> = ({ initial, onSubmit, onTest, onCancel }) => {
+export const ConnectionForm: React.FC<ConnectionFormProps> = ({ initial, onSubmit, onTest, onCancel }) => {
   const { handleSubmit, register, getValues } = useForm<Record<string, string>>({
     defaultValues: initial as Record<string, string>,
   });
