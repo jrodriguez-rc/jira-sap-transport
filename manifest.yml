@@ -9,12 +9,14 @@ modules:
   jira:projectSettingsPage:
     - key: sap-project-settings
       title: SAP Transport
+      icon: https://developer.atlassian.com/platform/forge/images/icons/configure.svg
       resource: project-settings-ui
       resolver:
         function: resolver
   jira:issuePanel:
     - key: sap-issue-panel
       title: SAP Transport
+      icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
       resource: issue-panel-ui
       resolver:
         function: resolver
@@ -71,6 +73,7 @@ app:
 
 permissions:
   scopes:
+    - write:jira-work
     - read:jira-work
     - read:jira-user
     - manage:jira-configuration
@@ -78,10 +81,5 @@ permissions:
     - storage:app
   external:
     fetch:
-      # The SAP hostname is configured per-installation by admins via the
-      # connection catalog (admin page). It is not knowable at build time and
-      # varies between customer environments, so we declare the wildcard here.
-      # Outbound calls are still authenticated (Basic auth) and routed through
-      # Forge's egress proxy.
       backend:
-        - 'https://*'
+        - https://*
