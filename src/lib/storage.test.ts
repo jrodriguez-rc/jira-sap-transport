@@ -4,6 +4,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const store = new Map<string, unknown>();
 const issueProps = new Map<string, unknown>();
 
+// Special issue keys trigger non-2xx server responses so the defensive
+// throw-on-error branches in getIssueTransports / setIssueTransports are exercised.
+// Special issue key 'PROP-EMPTY' returns 200 but with an empty body (no .value),
+// to hit the `body.value ?? []` fallback in storage.ts.
 vi.mock('@forge/api', () => ({
   storage: {
     get: vi.fn(async (key: string) => store.get(key)),
@@ -24,12 +28,15 @@ vi.mock('@forge/api', () => ({
         if (!match) throw new Error('unexpected path ' + path);
         const key = match[1];
         if (!init || !init.method || init.method === 'GET') {
+          if (key === 'GET-500') return { status: 500, json: async () => ({}) };
+          if (key === 'PROP-EMPTY') return { status: 200, json: async () => ({}) };
           const v = issueProps.get(key);
           return v === undefined
             ? { status: 404, json: async () => ({}) }
             : { status: 200, json: async () => ({ value: v }) };
         }
         if (init.method === 'PUT') {
+          if (key === 'PUT-409') return { status: 409, json: async () => ({}) };
           issueProps.set(key, JSON.parse(init.body!));
           return { status: 200, json: async () => ({}) };
         }
@@ -131,5 +138,17 @@ describe('issue transports', () => {
   it('sets and reads the transport list', async () => {
     await setIssueTransports('PROJ-1', [entry]);
     expect(await getIssueTransports('PROJ-1')).toEqual([entry]);
+  });
+
+  it('returns [] when the issue property exists but has no .value', async () => {
+    expect(await getIssueTransports('PROP-EMPTY')).toEqual([]);
+  });
+
+  it('throws when the property GET fails with a non-200/404 status', async () => {
+    await expect(getIssueTransports('GET-500')).rejects.toThrow(/Issue property fetch failed/);
+  });
+
+  it('throws when the property PUT fails with a 3xx+ status', async () => {
+    await expect(setIssueTransports('PUT-409', [entry])).rejects.toThrow(/Issue property write failed/);
   });
 });

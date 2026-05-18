@@ -68,6 +68,15 @@ describe('saveConnectionResolver', () => {
       context: {}
     })).rejects.toThrow(/client/i);
   });
+
+  it('rejects payloads missing label / username / password', async () => {
+    // Hits the third validateConnection branch at connections.ts L15 — label is
+    // required even when host and client are well-formed.
+    await expect(saveConnectionResolver({
+      payload: { hostname: 'https://x', client: '100', username: 'u', password: 'p' },
+      context: {}
+    })).rejects.toThrow(/label, username and password are required/);
+  });
 });
 
 describe('deleteConnectionResolver', () => {

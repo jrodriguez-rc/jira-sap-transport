@@ -3,7 +3,13 @@ import type { Connection, ProjectConfig } from '../lib/types';
 
 const appStore = new Map<string, unknown>();
 const issueProps = new Map<string, unknown>();
-const userByAcct = new Map<string, { emailAddress: string }>([['acc1', { emailAddress: 'a@b.com' }]]);
+const userByAcct = new Map<string, { emailAddress?: string }>([
+  ['acc1', { emailAddress: 'a@b.com' }],
+  ['acc-no-email', {}] // user exists but emailAddress is hidden
+]);
+// Special accountId 'acc-403' triggers a non-200 response from /user; special
+// issueKey 'BROKEN-1' triggers a non-200 from /issue. Both are wired here so the
+// resolver's defensive error branches (issue-actions.ts L26 and L34) are exercised.
 
 vi.mock('@forge/api', () => ({
   storage: {
@@ -31,11 +37,14 @@ vi.mock('@forge/api', () => ({
         }
         const userMatch = path.match(/\/rest\/api\/3\/user\?accountId=(.+)$/);
         if (userMatch) {
-          const u = userByAcct.get(decodeURIComponent(userMatch[1]));
+          const acct = decodeURIComponent(userMatch[1]);
+          if (acct === 'acc-403') return { status: 403, json: async () => ({}) };
+          const u = userByAcct.get(acct);
           return { status: 200, json: async () => u ?? {} };
         }
         const issueMatch = path.match(/\/rest\/api\/3\/issue\/([^/?]+)(?:\?.*)?$/);
         if (issueMatch) {
+          if (issueMatch[1] === 'BROKEN-1') return { status: 500, json: async () => ({}) };
           return { status: 200, json: async () => ({ key: issueMatch[1], fields: { summary: 'Hi' } }) };
         }
         throw new Error('unexpected path ' + path);
@@ -190,5 +199,93 @@ describe('listTransportsResolver', () => {
     issueProps.set('PROJ-1', [{ requestId: 'DEVK900123', type: 'K', target: 'QAS', description: 'x', createdAt: '2026-01-01', status: 'D', statusText: 'm' }]);
     const r = await listTransportsResolver({ payload: { issueKey: 'PROJ-1' }, context: {} });
     expect(r).toHaveLength(1);
+  });
+});
+
+// The following tests cover defensive error branches that previously had no
+// coverage: connection-override path, /user 4xx, user with no email,
+// /issue 4xx, missing accountId without emailOverride, and link-idempotency.
+describe('createTransportResolver — defensive branches', () => {
+  it('uses connectionOverride when project config supplies one (skips connectionId lookup)', async () => {
+    appStore.set('project:10001:config', {
+      projectCode: 'PRJX',
+      descriptionTemplate: '',
+      defaults: { type: 'K', target: 'QAS' },
+      connectionOverride: { hostname: 'https://override.sap.lan', client: '200', username: 'u2', password: 'p2' }
+    });
+    const r = await createTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      context: { accountId: 'acc1' }
+    });
+    expect(r.requestId).toBe('DEVK900123');
+  });
+
+  it('rejects when /user returns a non-200 status', async () => {
+    await expect(createTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      context: { accountId: 'acc-403' }
+    })).rejects.toThrow(/Cannot resolve user email/);
+  });
+
+  it('rejects when /user returns 200 but no emailAddress', async () => {
+    await expect(createTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      context: { accountId: 'acc-no-email' }
+    })).rejects.toThrow(/no email visible/);
+  });
+
+  it('rejects when /issue returns a non-200 status', async () => {
+    await expect(createTransportResolver({
+      payload: { projectId: '10001', issueKey: 'BROKEN-1', type: 'K' },
+      context: { accountId: 'acc1' }
+    })).rejects.toThrow(/Cannot read issue/);
+  });
+
+  it('rejects when there is no accountId and no emailOverride', async () => {
+    await expect(createTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      context: {}
+    })).rejects.toThrow(/Missing accountId/);
+  });
+
+  it('uses emailOverride and skips the /user lookup entirely', async () => {
+    // accountId is missing on purpose — the emailOverride path is the bypass.
+    const r = await createTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K', emailOverride: 'auto@bot.com' },
+      context: {}
+    });
+    expect(r.requestId).toBe('DEVK900123');
+  });
+});
+
+describe('linkTransportResolver — idempotency', () => {
+  it('does not append the entry twice when the same requestId is already linked', async () => {
+    issueProps.set('PROJ-1', [{
+      requestId: 'DEVK900123', type: 'K', target: 'QAS', description: 'x',
+      createdAt: '2026-01-01', status: 'D', statusText: 'm'
+    }]);
+    await linkTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', requestId: 'DEVK900123' },
+      context: { accountId: 'acc1' }
+    });
+    const list = issueProps.get('PROJ-1') as Array<{ requestId: string }>;
+    expect(list).toHaveLength(1);
+  });
+});
+
+describe('refreshTransportResolver — entries that do not match', () => {
+  it('keeps non-matching entries unchanged when refreshing one specific requestId', async () => {
+    issueProps.set('PROJ-1', [
+      { requestId: 'DEVK900123', type: 'K', target: 'QAS', description: 'x', createdAt: '2026-01-01', status: 'X', statusText: 'old' },
+      { requestId: 'OTHER-999', type: 'K', target: 'QAS', description: 'y', createdAt: '2026-01-02', status: 'D', statusText: 'modifiable' }
+    ]);
+    await refreshTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', requestId: 'DEVK900123' },
+      context: { accountId: 'acc1' }
+    });
+    const list = issueProps.get('PROJ-1') as Array<{ requestId: string; status: string; statusText: string }>;
+    // The refreshed entry got the new status; the un-targeted entry is untouched.
+    expect(list.find((e) => e.requestId === 'DEVK900123')?.status).toBe('D');
+    expect(list.find((e) => e.requestId === 'OTHER-999')?.statusText).toBe('modifiable');
   });
 });
