@@ -20,19 +20,151 @@ modules:
       resource: issue-panel-ui
       resolver:
         function: resolver
-  jira:jiraAutomationAction:
+  automation:actionProvider:
+    - key: sap-transport-actions
+      actions:
+        - create-sap-transport
+        - release-sap-transport
+        - link-sap-transport
+  action:
     - key: create-sap-transport
       name: Create SAP Transport
+      description: Create an SAP transport request and link it to the Jira issue.
       function: automation-create
       actionVerb: CREATE
+      config:
+        resource: automation-create-ui
+        render: native
+      inputs:
+        projectId:
+          title: Project ID
+          description: Jira project ID
+          type: string
+        issueKey:
+          title: Issue key
+          description: Jira issue key (e.g. PROJ-1)
+          type: string
+        type:
+          title: Transport type
+          description: SAP transport type (K=workbench, W=customizing, T=task)
+          type: string
+        target:
+          title: Target system
+          description: SAP target system code (e.g. QAS)
+          type: string
+        email:
+          title: Owner email
+          description: Email of the SAP transport owner
+          type: string
+      outputContext:
+        entityName: SapTrans
+        outputType: OBJECT
+        outputDomain: sap
+      outputs:
+        requestId:
+          description: SAP transport request id
+          nullable: true
+          type: string
+        status:
+          description: SAP status code
+          nullable: true
+          type: string
+        statusText:
+          description: SAP status text
+          nullable: true
+          type: string
+        error:
+          description: Error message if failed
+          nullable: true
+          type: string
     - key: release-sap-transport
       name: Release SAP Transport
+      description: Release one or more SAP transports linked to a Jira issue.
       function: automation-release
-      actionVerb: ACT
+      actionVerb: UPDATE
+      config:
+        resource: automation-release-ui
+        render: native
+      inputs:
+        projectId:
+          title: Project ID
+          description: Jira project ID
+          type: string
+        issueKey:
+          title: Issue key
+          description: Jira issue key
+          type: string
+        mode:
+          title: Release mode
+          description: One of all-linked, by-id, latest
+          type: string
+        requestId:
+          title: Transport request id
+          description: Required when mode=by-id
+          type: string
+        onlyType:
+          title: Only transport type
+          description: K, W, T or any
+          type: string
+      outputContext:
+        entityName: SapTrans
+        outputType: OBJECT
+        outputDomain: sap
+      outputs:
+        released:
+          description: Comma-separated released request ids
+          nullable: true
+          type: string
+        skipped:
+          description: Comma-separated skipped request ids
+          nullable: true
+          type: string
+        failed:
+          description: Comma-separated failed request ids
+          nullable: true
+          type: string
     - key: link-sap-transport
       name: Link Existing SAP Transport
+      description: Attach an existing SAP transport id to a Jira issue.
       function: automation-link
-      actionVerb: ACT
+      actionVerb: UPDATE
+      config:
+        resource: automation-link-ui
+        render: native
+      inputs:
+        projectId:
+          title: Project ID
+          description: Jira project ID
+          type: string
+        issueKey:
+          title: Issue key
+          description: Jira issue key
+          type: string
+        requestId:
+          title: Transport request id
+          description: Existing SAP transport request id
+          type: string
+      outputContext:
+        entityName: SapTrans
+        outputType: OBJECT
+        outputDomain: sap
+      outputs:
+        requestId:
+          description: SAP transport request id
+          nullable: true
+          type: string
+        status:
+          description: SAP status code
+          nullable: true
+          type: string
+        statusText:
+          description: SAP status text
+          nullable: true
+          type: string
+        error:
+          description: Error message if failed
+          nullable: true
+          type: string
   function:
     - key: resolver
       handler: index.handler
@@ -50,6 +182,12 @@ resources:
     path: src/frontend/project-settings
   - key: issue-panel-ui
     path: src/frontend/issue-panel
+  - key: automation-create-ui
+    path: src/frontend/automation-create-config
+  - key: automation-release-ui
+    path: src/frontend/automation-release-config
+  - key: automation-link-ui
+    path: src/frontend/automation-link-config
 
 app:
   id: ari:cloud:ecosystem::app/848cbd63-7137-4183-abe7-bf3262757e22

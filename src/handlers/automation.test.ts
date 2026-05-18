@@ -84,10 +84,10 @@ beforeEach(() => {
 });
 
 describe('automationCreate', () => {
-  it('creates and outputs smart values', async () => {
+  it('creates and outputs flat action outputs', async () => {
     const r = await automationCreate({ payload: { projectId: '10001', issueKey: 'PROJ-1', email: 'a@b.com', type: 'K' }, context: { accountId: 'acc' } });
-    expect(r.sapTransport.requestId).toBe('DEVK900123');
-    expect(r.sapTransport.error).toBe('');
+    expect(r.requestId).toBe('DEVK900123');
+    expect(r.error).toBe('');
   });
 
   it('forwards the email input to createTransport', async () => {
@@ -95,7 +95,7 @@ describe('automationCreate', () => {
       payload: { projectId: '10001', issueKey: 'PROJ-1', email: 'auto@b.com', type: 'K' },
       context: { accountId: 'acc' }
     });
-    expect(r.sapTransport.requestId).toBe('DEVK900123');
+    expect(r.requestId).toBe('DEVK900123');
     expect(createTransportCalls.length).toBeGreaterThan(0);
     expect(createTransportCalls[createTransportCalls.length - 1].email).toBe('auto@b.com');
   });
@@ -104,7 +104,7 @@ describe('automationCreate', () => {
 describe('automationLink', () => {
   it('appends an existing transport', async () => {
     const r = await automationLink({ payload: { projectId: '10001', issueKey: 'PROJ-1', requestId: 'DEVK900200' }, context: {} });
-    expect(r.sapTransport.requestId).toBe('DEVK900200');
+    expect(r.requestId).toBe('DEVK900200');
   });
 });
 
@@ -178,15 +178,15 @@ describe('automationCreate / automationLink error paths', () => {
   it('automationCreate returns error string when resolver throws', async () => {
     appStore.delete('project:10001:config');
     const r = await automationCreate({ payload: { projectId: '10001', issueKey: 'PROJ-1', email: 'a@b.com', type: 'K' }, context: { accountId: 'acc' } });
-    expect(r.sapTransport.requestId).toBe('');
-    expect(r.sapTransport.error).toMatch(/configur/i);
+    expect(r.requestId).toBe('');
+    expect(r.error).toMatch(/configur/i);
   });
 
   it('automationLink returns error string when resolver throws', async () => {
     appStore.delete('project:10001:config');
     const r = await automationLink({ payload: { projectId: '10001', issueKey: 'PROJ-1', requestId: 'X' }, context: {} });
-    expect(r.sapTransport.requestId).toBe('');
-    expect(r.sapTransport.error).toMatch(/configur/i);
+    expect(r.requestId).toBe('');
+    expect(r.error).toMatch(/configur/i);
   });
 });
 
@@ -198,7 +198,7 @@ describe('automation function-module handlers (index exports)', () => {
       { projectId: '10001', issueKey: 'PROJ-1', email: 'a@b.com', type: 'K' },
       { accountId: 'acc' }
     );
-    expect(r.sapTransport.requestId).toBeTruthy();
+    expect(r.requestId).toBeTruthy();
   });
 
   it('automationLinkHandler accepts (payload, context) directly', async () => {
@@ -206,7 +206,7 @@ describe('automation function-module handlers (index exports)', () => {
       { projectId: '10001', issueKey: 'PROJ-1', requestId: 'DEVK900200' },
       {}
     );
-    expect(r.sapTransport.requestId).toBe('DEVK900200');
+    expect(r.requestId).toBe('DEVK900200');
   });
 
   it('automationReleaseHandler accepts (payload, context) directly', async () => {

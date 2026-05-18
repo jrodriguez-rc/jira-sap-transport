@@ -7,16 +7,21 @@ import { logEvent } from '../lib/logger';
 
 interface AutomationArgs<P> { payload: P; context: { accountId?: string } }
 
-interface SmartValue { sapTransport: { requestId: string; status: string; statusText: string; error: string } }
+export interface AutomationCreateOutput {
+  requestId: string;
+  status: string;
+  statusText: string;
+  error: string;
+}
 
-function out(entry: { requestId: string; status: string; statusText: string }, error = ''): SmartValue {
-  return { sapTransport: { ...entry, error } };
+function flatOut(entry: { requestId: string; status: string; statusText: string }, error = ''): AutomationCreateOutput {
+  return { requestId: entry.requestId, status: entry.status, statusText: entry.statusText, error };
 }
 
 export async function automationCreate(args: AutomationArgs<{
   projectId: string; issueKey: string; type: TransportType;
   target?: string; descriptionOverride?: string; email: string;
-}>): Promise<SmartValue> {
+}>): Promise<AutomationCreateOutput> {
   const started = Date.now();
   try {
     const entry = await createTransportResolver({
@@ -31,14 +36,14 @@ export async function automationCreate(args: AutomationArgs<{
       context: { accountId: args.context.accountId ?? 'automation' }
     });
     logEvent('info', { action: 'automation.create', projectId: args.payload.projectId, issueKey: args.payload.issueKey, requestId: entry.requestId, durationMs: Date.now() - started, outcome: 'ok' });
-    return out({ requestId: entry.requestId, status: entry.status, statusText: entry.statusText });
+    return flatOut({ requestId: entry.requestId, status: entry.status, statusText: entry.statusText });
   } catch (e) {
     logEvent('error', { action: 'automation.create', projectId: args.payload.projectId, issueKey: args.payload.issueKey, durationMs: Date.now() - started, outcome: 'fail', errorCode: (e as { code?: string }).code, message: (e as Error).message });
-    return out({ requestId: '', status: '', statusText: '' }, errMsg(e));
+    return flatOut({ requestId: '', status: '', statusText: '' }, errMsg(e));
   }
 }
 
-export async function automationLink(args: AutomationArgs<{ projectId: string; issueKey: string; requestId: string }>): Promise<SmartValue> {
+export async function automationLink(args: AutomationArgs<{ projectId: string; issueKey: string; requestId: string }>): Promise<AutomationCreateOutput> {
   const started = Date.now();
   try {
     const entry = await linkTransportResolver({
@@ -46,10 +51,10 @@ export async function automationLink(args: AutomationArgs<{ projectId: string; i
       context: { accountId: args.context.accountId ?? 'automation' }
     });
     logEvent('info', { action: 'automation.link', projectId: args.payload.projectId, issueKey: args.payload.issueKey, requestId: entry.requestId, durationMs: Date.now() - started, outcome: 'ok' });
-    return out({ requestId: entry.requestId, status: entry.status, statusText: entry.statusText });
+    return flatOut({ requestId: entry.requestId, status: entry.status, statusText: entry.statusText });
   } catch (e) {
     logEvent('error', { action: 'automation.link', projectId: args.payload.projectId, issueKey: args.payload.issueKey, durationMs: Date.now() - started, outcome: 'fail', errorCode: (e as { code?: string }).code, message: (e as Error).message });
-    return out({ requestId: '', status: '', statusText: '' }, errMsg(e));
+    return flatOut({ requestId: '', status: '', statusText: '' }, errMsg(e));
   }
 }
 
