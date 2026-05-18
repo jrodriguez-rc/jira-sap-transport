@@ -36,7 +36,7 @@ const TYPE_LABELS: Record<TransportType, string> = {
   T: 'Copy',
 };
 
-const App: React.FC = () => {
+export const App: React.FC = () => {
   const [projectId, setProjectId] = useState<string>('');
   const [issueKey, setIssueKey] = useState<string>('');
   const [entries, setEntries] = useState<SapTransportEntry[]>([]);
@@ -188,7 +188,7 @@ interface CreateDialogProps {
   onError: (msg: string) => void;
 }
 
-const CreateDialog: React.FC<CreateDialogProps> = ({
+export const CreateDialog: React.FC<CreateDialogProps> = ({
   type,
   projectId,
   issueKey,
@@ -257,7 +257,7 @@ interface LinkDialogProps {
   onError: (msg: string) => void;
 }
 
-const LinkDialog: React.FC<LinkDialogProps> = ({
+export const LinkDialog: React.FC<LinkDialogProps> = ({
   projectId,
   issueKey,
   onClose,

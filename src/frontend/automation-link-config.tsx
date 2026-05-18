@@ -1,7 +1,7 @@
 import React from 'react';
 import ForgeReconciler, { Form, Label, Textfield, useForm } from '@forge/react';
 
-const Config: React.FC = () => {
+export const Config: React.FC = () => {
   const { register, handleSubmit } = useForm<Record<string, string>>();
   return (
     <Form onSubmit={handleSubmit(() => undefined)}>

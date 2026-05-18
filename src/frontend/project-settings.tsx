@@ -36,7 +36,7 @@ const TYPE_LABELS: Record<TransportType, string> = {
   T: 'Copy',
 };
 
-const App: React.FC = () => {
+export const App: React.FC = () => {
   const [projectId, setProjectId] = useState<string>('');
   const [connections, setConnections] = useState<ConnPublic[]>([]);
   const [cfg, setCfg] = useState<ProjectConfig | null>(null);
