@@ -17,7 +17,7 @@ import ForgeReconciler, {
   Textfield,
 } from '@forge/react';
 import { invoke, view } from '@forge/bridge';
-import type { SapTransportEntry, TransportType } from '../../lib/types';
+import type { SapTransportEntry, TransportType } from '../lib/types';
 
 interface IssueContext {
   extension: {

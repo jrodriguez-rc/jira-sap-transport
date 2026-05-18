@@ -14,7 +14,7 @@ import ForgeReconciler, {
   Textfield,
 } from '@forge/react';
 import { invoke, view } from '@forge/bridge';
-import type { ProjectConfig, RenderResult, TransportType } from '../../lib/types';
+import type { ProjectConfig, RenderResult, TransportType } from '../lib/types';
 
 interface ConnPublic {
   id: string;

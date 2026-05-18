@@ -4,6 +4,7 @@ modules:
       title: SAP Transport — Connections
       icon: https://developer.atlassian.com/platform/forge/images/icons/configure.svg
       resource: admin-ui
+      render: native
       resolver:
         function: resolver
   jira:projectSettingsPage:
@@ -11,6 +12,7 @@ modules:
       title: SAP Transport
       icon: https://developer.atlassian.com/platform/forge/images/icons/configure.svg
       resource: project-settings-ui
+      render: native
       resolver:
         function: resolver
   jira:issuePanel:
@@ -18,6 +20,7 @@ modules:
       title: SAP Transport
       icon: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
       resource: issue-panel-ui
+      render: native
       resolver:
         function: resolver
   automation:actionProvider:
@@ -177,11 +180,11 @@ modules:
 
 resources:
   - key: admin-ui
-    path: src/frontend/admin-page
+    path: src/frontend/admin-page.tsx
   - key: project-settings-ui
-    path: src/frontend/project-settings
+    path: src/frontend/project-settings.tsx
   - key: issue-panel-ui
-    path: src/frontend/issue-panel
+    path: src/frontend/issue-panel.tsx
   - key: automation-create-ui
     path: src/frontend/automation-create-config
   - key: automation-release-ui
