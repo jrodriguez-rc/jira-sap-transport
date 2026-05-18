@@ -1,24 +1,25 @@
 // src/lib/storage.ts
-import api, { storage, route } from '@forge/api';
+import api, { route } from '@forge/api';
+import { kvs, WhereConditions } from '@forge/kvs';
 import type { Connection, ConnectionPublic, ProjectConfig, SapTransportEntry } from './types';
 
 const CONN_PREFIX = 'connections:';
 
 export async function saveConnection(c: Connection): Promise<void> {
-  await storage.set(CONN_PREFIX + c.id, c);
+  await kvs.set(CONN_PREFIX + c.id, c);
 }
 
 export async function getConnection(id: string): Promise<Connection | undefined> {
-  return (await storage.get(CONN_PREFIX + id)) as Connection | undefined;
+  return (await kvs.get(CONN_PREFIX + id)) as Connection | undefined;
 }
 
 export async function deleteConnection(id: string): Promise<void> {
-  await storage.delete(CONN_PREFIX + id);
+  await kvs.delete(CONN_PREFIX + id);
 }
 
 export async function listConnections(): Promise<Connection[]> {
-  // Forge storage.query lists by key prefix; the mock in tests returns everything.
-  const result = await storage.query().where('key', { condition: 'STARTS_WITH', value: CONN_PREFIX } as never).getMany();
+  // @forge/kvs query: filter by key prefix.
+  const result = await kvs.query().where('key', WhereConditions.beginsWith(CONN_PREFIX)).getMany();
   return (result.results as Array<{ key: string; value: Connection }>)
     .map((r) => r.value)
     .filter((v): v is Connection => v != null && typeof v === 'object');
@@ -32,11 +33,11 @@ export function toPublic(c: Connection): ConnectionPublic {
 const PROJECT_PREFIX = 'project:';
 
 export async function saveProjectConfig(projectId: string, cfg: ProjectConfig): Promise<void> {
-  await storage.set(`${PROJECT_PREFIX}${projectId}:config`, cfg);
+  await kvs.set(`${PROJECT_PREFIX}${projectId}:config`, cfg);
 }
 
 export async function getProjectConfig(projectId: string): Promise<ProjectConfig | undefined> {
-  return (await storage.get(`${PROJECT_PREFIX}${projectId}:config`)) as ProjectConfig | undefined;
+  return (await kvs.get(`${PROJECT_PREFIX}${projectId}:config`)) as ProjectConfig | undefined;
 }
 
 const ISSUE_PROPERTY_KEY = 'sap.transports';

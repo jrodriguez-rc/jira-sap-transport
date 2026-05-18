@@ -4,13 +4,19 @@ import type { ProjectConfig } from '../lib/types';
 const appStore = new Map<string, unknown>();
 const issueProps = new Map<string, unknown>();
 
-vi.mock('@forge/api', () => ({
-  storage: {
+vi.mock('@forge/kvs', () => ({
+  kvs: {
     get: vi.fn(async (k: string) => appStore.get(k)),
     set: vi.fn(async (k: string, v: unknown) => { appStore.set(k, v); }),
     delete: vi.fn(),
     query: () => ({ where: () => ({ getMany: async () => ({ results: [] }) }) })
   },
+  WhereConditions: {
+    beginsWith: (value: string) => ({ condition: 'BEGINS_WITH', value })
+  }
+}));
+
+vi.mock('@forge/api', () => ({
   default: {
     asApp: () => ({
       requestJira: vi.fn(async (path: string, init?: { method?: string; body?: string }) => {

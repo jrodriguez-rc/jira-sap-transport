@@ -1,21 +1,30 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const store = new Map<string, unknown>();
-vi.mock('@forge/api', () => ({
-  storage: {
+vi.mock('@forge/kvs', () => ({
+  kvs: {
     get: vi.fn(async (k: string) => store.get(k)),
     set: vi.fn(async (k: string, v: unknown) => { store.set(k, v); }),
     delete: vi.fn(async (k: string) => { store.delete(k); }),
     query: () => ({
-      where: () => ({
-        getMany: async () => ({
-          results: Array.from(store.entries())
-            .filter(([k]) => k.startsWith('connections:'))
-            .map(([key, value]) => ({ key, value }))
-        })
+      where: (_property: string, clause: { value?: string }) => ({
+        getMany: async () => {
+          const prefix = clause?.value ?? '';
+          return {
+            results: Array.from(store.entries())
+              .filter(([k]) => k.startsWith(prefix))
+              .map(([key, value]) => ({ key, value }))
+          };
+        }
       })
     })
   },
+  WhereConditions: {
+    beginsWith: (value: string) => ({ condition: 'BEGINS_WITH', value })
+  }
+}));
+
+vi.mock('@forge/api', () => ({
   default: {
     asApp: () => ({ requestJira: vi.fn() })
   },

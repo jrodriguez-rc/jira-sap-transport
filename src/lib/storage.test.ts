@@ -8,19 +8,30 @@ const issueProps = new Map<string, unknown>();
 // throw-on-error branches in getIssueTransports / setIssueTransports are exercised.
 // Special issue key 'PROP-EMPTY' returns 200 but with an empty body (no .value),
 // to hit the `body.value ?? []` fallback in storage.ts.
-vi.mock('@forge/api', () => ({
-  storage: {
+vi.mock('@forge/kvs', () => ({
+  kvs: {
     get: vi.fn(async (key: string) => store.get(key)),
     set: vi.fn(async (key: string, value: unknown) => { store.set(key, value); }),
     delete: vi.fn(async (key: string) => { store.delete(key); }),
     query: vi.fn(() => ({
-      where: () => ({
-        getMany: async () => ({
-          results: Array.from(store.entries()).map(([key, value]) => ({ key, value }))
-        })
+      where: (_property: string, clause: { value?: string }) => ({
+        getMany: async () => {
+          const prefix = clause?.value ?? '';
+          return {
+            results: Array.from(store.entries())
+              .filter(([key]) => key.startsWith(prefix))
+              .map(([key, value]) => ({ key, value }))
+          };
+        }
       })
     }))
   },
+  WhereConditions: {
+    beginsWith: (value: string) => ({ condition: 'BEGINS_WITH', value })
+  }
+}));
+
+vi.mock('@forge/api', () => ({
   default: {
     asApp: () => ({
       requestJira: vi.fn(async (path: string, init?: { method?: string; body?: string }) => {

@@ -1,13 +1,19 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const store = new Map<string, unknown>();
-vi.mock('@forge/api', () => ({
-  storage: {
+vi.mock('@forge/kvs', () => ({
+  kvs: {
     get: vi.fn(async (k: string) => store.get(k)),
     set: vi.fn(async (k: string, v: unknown) => { store.set(k, v); }),
     delete: vi.fn(),
     query: () => ({ where: () => ({ getMany: async () => ({ results: [] }) }) })
   },
+  WhereConditions: {
+    beginsWith: (value: string) => ({ condition: 'BEGINS_WITH', value })
+  }
+}));
+
+vi.mock('@forge/api', () => ({
   default: { asApp: () => ({ requestJira: vi.fn() }) },
   route: (s: TemplateStringsArray) => s.join('')
 }));
