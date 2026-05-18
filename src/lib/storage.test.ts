@@ -71,7 +71,7 @@ import type { Connection } from './types';
 const sample: Connection = {
   id: 'dev-100',
   label: 'DEV',
-  hostname: 'https://dev.sap.lan',
+  slotKey: 'sap-backend-1',
   client: '100',
   username: 'JIRAUSR',
   password: 'secret'
@@ -102,7 +102,7 @@ describe('connections storage', () => {
     expect(pub).toEqual({
       id: 'dev-100',
       label: 'DEV',
-      hostname: 'https://dev.sap.lan',
+      slotKey: 'sap-backend-1',
       client: '100',
       username: 'JIRAUSR'
     });

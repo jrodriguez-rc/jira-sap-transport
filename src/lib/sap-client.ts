@@ -5,10 +5,12 @@ import type { RequestType, SapClientCallContext, SapMessage, TransportType } fro
 export const BASE_PATH =
   '/sap/opu/odata4/sap/zjira_api_transportrequest_o4/srvd_a2x/sap/zjira_api_transportrequest_o4/0001';
 
-export function buildUrl(conn: Pick<SapClientCallContext, 'hostname' | 'client'>, path: string): string {
-  const host = conn.hostname.replace(/\/+$/, '');
+// Build the path Forge Remote will append to the configured backend URL.
+// The hostname is no longer part of the call — the admin configures it for
+// the slotKey in Atlassian's native "App access" page.
+export function buildRemotePath(client: string, path: string): string {
   const sep = path.includes('?') ? '&' : '?';
-  return `${host}${BASE_PATH}${path}${sep}sap-client=${encodeURIComponent(conn.client)}`;
+  return `${BASE_PATH}${path}${sep}sap-client=${encodeURIComponent(client)}`;
 }
 
 export function basicAuthHeader(conn: { username: string; password: string }): string {
@@ -57,13 +59,28 @@ export interface SapClient {
   getTransport(requestId: string): Promise<RequestType>;
 }
 
-type FetchLike = (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{
+// Minimal shape we use from APIResponse. Headers.get returns string|null.
+interface RemoteResponse {
   status: number;
   json: () => Promise<unknown>;
   headers: { get: (name: string) => string | null };
-}>;
+}
 
-export function createSapClient(conn: SapClientCallContext, fetchImpl: FetchLike = (api.fetch as unknown as FetchLike)): SapClient {
+export type InvokeRemoteImpl = (
+  remoteKey: string,
+  options: { path: string; method?: string; headers?: Record<string, string>; body?: string }
+) => Promise<RemoteResponse>;
+
+const defaultInvokeRemote: InvokeRemoteImpl = (key, opts) =>
+  // The @forge/api invokeRemote signature is structurally compatible.
+  // Cast through unknown because the production types use node-fetch RequestInit
+  // (Headers/BodyInit unions), while our internal interface narrows that down.
+  (api as unknown as { invokeRemote: InvokeRemoteImpl }).invokeRemote(key, opts);
+
+export function createSapClient(
+  conn: SapClientCallContext,
+  invokeRemoteImpl: InvokeRemoteImpl = defaultInvokeRemote
+): SapClient {
   const auth = basicAuthHeader(conn);
 
   async function safeJson(res: { json: () => Promise<unknown> }): Promise<unknown> {
@@ -75,18 +92,20 @@ export function createSapClient(conn: SapClientCallContext, fetchImpl: FetchLike
 
   function extractCookies(setCookieHeader: string | null): string | null {
     if (!setCookieHeader) return null;
-    // set-cookie may be comma-joined when multiple cookies are returned via headers.get().
-    // Each piece is `name=value; Path=...; HttpOnly; SameSite=...`. We need only the `name=value`.
     const pairs = setCookieHeader
-      .split(/,(?=[^;]+=[^;]+)/)             // split on commas that precede another "name=value"
+      .split(/,(?=[^;]+=[^;]+)/)
       .map((c) => c.split(';')[0].trim())
       .filter(Boolean);
     return pairs.length > 0 ? pairs.join('; ') : null;
   }
 
   async function fetchCsrf(): Promise<{ token: string | null; cookie: string | null }> {
-    const url = buildUrl(conn, '/');
-    const res = await fetchImpl(url, { method: 'GET', headers: { Authorization: auth, 'x-csrf-token': 'Fetch', Accept: 'application/json' } });
+    const path = buildRemotePath(conn.client, '/');
+    const res = await invokeRemoteImpl(conn.slotKey, {
+      path,
+      method: 'GET',
+      headers: { Authorization: auth, 'x-csrf-token': 'Fetch', Accept: 'application/json' }
+    });
     return {
       token: res.headers.get('x-csrf-token'),
       cookie: extractCookies(res.headers.get('set-cookie'))
@@ -94,7 +113,7 @@ export function createSapClient(conn: SapClientCallContext, fetchImpl: FetchLike
   }
 
   async function callJson(path: string, init?: { method?: string; body?: unknown }): Promise<{ status: number; body: unknown }> {
-    const url = buildUrl(conn, path);
+    const remotePath = buildRemotePath(conn.client, path);
     const isUnsafe = !!init?.method && init.method !== 'GET';
     const headers: Record<string, string> = {
       Authorization: auth,
@@ -109,7 +128,7 @@ export function createSapClient(conn: SapClientCallContext, fetchImpl: FetchLike
       bodyStr = JSON.stringify(init.body);
     }
 
-    let res = await fetchImpl(url, { method: init?.method ?? 'GET', headers, body: bodyStr });
+    let res = await invokeRemoteImpl(conn.slotKey, { path: remotePath, method: init?.method ?? 'GET', headers, body: bodyStr });
 
     if (res.status === 403 && isUnsafe && res.headers.get('x-csrf-token') === 'Required') {
       const { token, cookie } = await fetchCsrf();
@@ -120,7 +139,7 @@ export function createSapClient(conn: SapClientCallContext, fetchImpl: FetchLike
       if (cookie) csrfCookie = cookie;
       headers['x-csrf-token'] = csrfToken;
       if (csrfCookie) headers['Cookie'] = csrfCookie;
-      res = await fetchImpl(url, { method: init?.method ?? 'GET', headers, body: bodyStr });
+      res = await invokeRemoteImpl(conn.slotKey, { path: remotePath, method: init?.method ?? 'GET', headers, body: bodyStr });
     }
 
     const body = await safeJson(res);
