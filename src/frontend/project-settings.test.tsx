@@ -121,7 +121,7 @@ describe('project-settings App', () => {
     await screen.findByText('SAP Transport — Project Settings');
   });
 
-  it('toggling the radio to Override reveals the hostname/client/username/password form', async () => {
+  it('toggling the radio to Override reveals the slot/client/username/password form', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'connections.list') return ok([]);
       if (key === 'project.getConfig') {
@@ -139,7 +139,7 @@ describe('project-settings App', () => {
     const overrideRadio = screen.getByLabelText('Override') as HTMLInputElement;
     expect(overrideRadio.checked).toBe(false);
     await user.click(overrideRadio);
-    await screen.findByText('Hostname (https URL)');
+    await screen.findByText('Backend slot');
     expect(screen.getByText('Client (3 digits)')).toBeInTheDocument();
     expect(screen.getByText('Username')).toBeInTheDocument();
     expect(screen.getByText('Password')).toBeInTheDocument();
@@ -240,7 +240,7 @@ describe('project-settings App', () => {
     await screen.findByText('no connections');
   });
 
-  it('typing into override hostname/client/username/password updates the inline form', async () => {
+  it('typing into override client/username/password updates the inline form', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'connections.list') return ok([]);
       if (key === 'project.getConfig') {
@@ -256,20 +256,18 @@ describe('project-settings App', () => {
     render(<App />);
     await screen.findByDisplayValue('PROJ');
     await user.click(screen.getByLabelText('Override'));
-    await screen.findByText('Hostname (https URL)');
-    // After toggling to override, four extra inputs appear (hostname, client,
-    // username, password). They start empty.
+    await screen.findByText('Backend slot');
+    // After toggling to override, three textbox inputs appear (client, username,
+    // project code/default target also exist) plus a password input. The slotKey
+    // is a Select (non-input), not exercised here.
     const inputs = screen.getAllByRole('textbox') as HTMLInputElement[];
-    // inputs: [hostname, client, username, project code, default target]
-    const hostnameInput = inputs[0];
-    const clientInput = inputs[1];
-    const usernameInput = inputs[2];
+    // inputs (in render order): [client, username, project code, default target]
+    const clientInput = inputs[0];
+    const usernameInput = inputs[1];
     const passwordInput = document.querySelector('input[type="password"]') as HTMLInputElement;
-    await user.type(hostnameInput, 'https://h');
     await user.type(clientInput, '100');
     await user.type(usernameInput, 'jdoe');
     await user.type(passwordInput, 'pw');
-    expect(hostnameInput.value).toBe('https://h');
     expect(clientInput.value).toBe('100');
     expect(usernameInput.value).toBe('jdoe');
     expect(passwordInput.value).toBe('pw');
@@ -387,9 +385,9 @@ describe('project-settings App', () => {
           connectionOverride: {
             id: 'override',
             label: 'override',
-            hostname: 'https://existing',
+            slotKey: 'sap-backend-3',
             client: '100',
-            username: 'u',
+            username: 'usr-existing',
             password: 'p',
           },
         });
@@ -399,11 +397,11 @@ describe('project-settings App', () => {
     });
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByDisplayValue('https://existing');
+    await screen.findByDisplayValue('usr-existing');
     await user.click(screen.getByLabelText('From catalog'));
     // After toggling back the override panel should disappear.
     await waitFor(() => {
-      expect(screen.queryByDisplayValue('https://existing')).not.toBeInTheDocument();
+      expect(screen.queryByDisplayValue('usr-existing')).not.toBeInTheDocument();
     });
     await user.click(screen.getByText('Save'));
     await waitFor(() => {

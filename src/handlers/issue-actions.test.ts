@@ -11,13 +11,19 @@ const userByAcct = new Map<string, { emailAddress?: string }>([
 // issueKey 'BROKEN-1' triggers a non-200 from /issue. Both are wired here so the
 // resolver's defensive error branches (issue-actions.ts L26 and L34) are exercised.
 
-vi.mock('@forge/api', () => ({
-  storage: {
+vi.mock('@forge/kvs', () => ({
+  kvs: {
     get: vi.fn(async (k: string) => appStore.get(k)),
     set: vi.fn(async (k: string, v: unknown) => { appStore.set(k, v); }),
     delete: vi.fn(),
     query: () => ({ where: () => ({ getMany: async () => ({ results: [] }) }) })
   },
+  WhereConditions: {
+    beginsWith: (value: string) => ({ condition: 'BEGINS_WITH', value })
+  }
+}));
+
+vi.mock('@forge/api', () => ({
   default: {
     asApp: () => ({
       requestJira: vi.fn(async (path: string, init?: { method?: string; body?: string }) => {
@@ -76,7 +82,7 @@ vi.mock('../lib/sap-client', () => ({
   BASE_PATH: '/sap'
 }));
 
-const conn: Connection = { id: 'c1', label: 'DEV', hostname: 'https://x', client: '100', username: 'u', password: 'p' };
+const conn: Connection = { id: 'c1', label: 'DEV', slotKey: 'sap-backend-1', client: '100', username: 'u', password: 'p' };
 const cfg: ProjectConfig = { connectionId: 'c1', projectCode: 'PRJX', descriptionTemplate: '', defaults: { type: 'K', target: 'QAS' } };
 
 beforeEach(() => {
@@ -211,7 +217,7 @@ describe('createTransportResolver — defensive branches', () => {
       projectCode: 'PRJX',
       descriptionTemplate: '',
       defaults: { type: 'K', target: 'QAS' },
-      connectionOverride: { hostname: 'https://override.sap.lan', client: '200', username: 'u2', password: 'p2' }
+      connectionOverride: { slotKey: 'sap-backend-2', client: '200', username: 'u2', password: 'p2' }
     });
     const r = await createTransportResolver({
       payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },

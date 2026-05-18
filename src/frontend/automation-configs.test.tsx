@@ -29,7 +29,6 @@ describe('automation-create-config', () => {
     render(<CreateConfig />);
     expect(screen.getByText('Type')).toBeInTheDocument();
     expect(screen.getByText('Target (optional)')).toBeInTheDocument();
-    expect(screen.getByText('Description override (smart value)')).toBeInTheDocument();
     expect(screen.getByText('Email')).toBeInTheDocument();
   });
 });

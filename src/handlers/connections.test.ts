@@ -1,21 +1,30 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const store = new Map<string, unknown>();
-vi.mock('@forge/api', () => ({
-  storage: {
+vi.mock('@forge/kvs', () => ({
+  kvs: {
     get: vi.fn(async (k: string) => store.get(k)),
     set: vi.fn(async (k: string, v: unknown) => { store.set(k, v); }),
     delete: vi.fn(async (k: string) => { store.delete(k); }),
     query: () => ({
-      where: () => ({
-        getMany: async () => ({
-          results: Array.from(store.entries())
-            .filter(([k]) => k.startsWith('connections:'))
-            .map(([key, value]) => ({ key, value }))
-        })
+      where: (_property: string, clause: { value?: string }) => ({
+        getMany: async () => {
+          const prefix = clause?.value ?? '';
+          return {
+            results: Array.from(store.entries())
+              .filter(([k]) => k.startsWith(prefix))
+              .map(([key, value]) => ({ key, value }))
+          };
+        }
       })
     })
   },
+  WhereConditions: {
+    beginsWith: (value: string) => ({ condition: 'BEGINS_WITH', value })
+  }
+}));
+
+vi.mock('@forge/api', () => ({
   default: {
     asApp: () => ({ requestJira: vi.fn() })
   },
@@ -29,7 +38,7 @@ beforeEach(() => { store.clear(); });
 
 describe('listConnectionsResolver', () => {
   it('returns connections stripped of passwords', async () => {
-    store.set('connections:1', { id: '1', label: 'A', hostname: 'https://x', client: '100', username: 'u', password: 'secret' });
+    store.set('connections:1', { id: '1', label: 'A', slotKey: 'sap-backend-1', client: '100', username: 'u', password: 'secret' });
     const res = await listConnectionsResolver({ payload: {}, context: {} });
     expect(res[0]).not.toHaveProperty('password');
     expect(res[0].label).toBe('A');
@@ -39,7 +48,7 @@ describe('listConnectionsResolver', () => {
 describe('saveConnectionResolver', () => {
   it('persists a new connection with a generated id when missing', async () => {
     const res = await saveConnectionResolver({
-      payload: { label: 'A', hostname: 'https://x', client: '100', username: 'u', password: 'p' },
+      payload: { label: 'A', slotKey: 'sap-backend-1', client: '100', username: 'u', password: 'p' },
       context: {}
     });
     expect(res.id).toBeTruthy();
@@ -47,33 +56,38 @@ describe('saveConnectionResolver', () => {
   });
 
   it('updates an existing connection by id', async () => {
-    store.set('connections:fixed', { id: 'fixed', label: 'old', hostname: 'https://x', client: '100', username: 'u', password: 'p' });
+    store.set('connections:fixed', { id: 'fixed', label: 'old', slotKey: 'sap-backend-1', client: '100', username: 'u', password: 'p' });
     await saveConnectionResolver({
-      payload: { id: 'fixed', label: 'new', hostname: 'https://x', client: '100', username: 'u', password: 'p' },
+      payload: { id: 'fixed', label: 'new', slotKey: 'sap-backend-1', client: '100', username: 'u', password: 'p' },
       context: {}
     });
     expect((store.get('connections:fixed') as { label: string }).label).toBe('new');
   });
 
-  it('rejects invalid hostnames', async () => {
+  it('rejects an unknown slotKey', async () => {
     await expect(saveConnectionResolver({
-      payload: { label: 'A', hostname: 'http://insecure', client: '100', username: 'u', password: 'p' },
+      payload: { label: 'A', slotKey: 'sap-backend-99', client: '100', username: 'u', password: 'p' },
       context: {}
-    })).rejects.toThrow(/https/i);
+    })).rejects.toThrow(/slot/i);
+  });
+
+  it('rejects an empty slotKey', async () => {
+    await expect(saveConnectionResolver({
+      payload: { label: 'A', slotKey: '', client: '100', username: 'u', password: 'p' },
+      context: {}
+    })).rejects.toThrow(/slot/i);
   });
 
   it('rejects clients that are not 3 digits', async () => {
     await expect(saveConnectionResolver({
-      payload: { label: 'A', hostname: 'https://x', client: '10', username: 'u', password: 'p' },
+      payload: { label: 'A', slotKey: 'sap-backend-1', client: '10', username: 'u', password: 'p' },
       context: {}
     })).rejects.toThrow(/client/i);
   });
 
   it('rejects payloads missing label / username / password', async () => {
-    // Hits the third validateConnection branch at connections.ts L15 — label is
-    // required even when host and client are well-formed.
     await expect(saveConnectionResolver({
-      payload: { hostname: 'https://x', client: '100', username: 'u', password: 'p' },
+      payload: { slotKey: 'sap-backend-1', client: '100', username: 'u', password: 'p' },
       context: {}
     })).rejects.toThrow(/label, username and password are required/);
   });
@@ -81,7 +95,7 @@ describe('saveConnectionResolver', () => {
 
 describe('deleteConnectionResolver', () => {
   it('removes the entry', async () => {
-    store.set('connections:1', { id: '1', label: 'A', hostname: 'https://x', client: '100', username: 'u', password: 'p' });
+    store.set('connections:1', { id: '1', label: 'A', slotKey: 'sap-backend-1', client: '100', username: 'u', password: 'p' });
     await deleteConnectionResolver({ payload: { id: '1' }, context: {} });
     expect(store.size).toBe(0);
   });
@@ -96,10 +110,21 @@ describe('testConnectionResolver', () => {
       getTransport: vi.fn()
     } as never);
     const res = await testConnectionResolver({
-      payload: { hostname: 'https://x', client: '100', username: 'u', password: 'p' },
+      payload: { slotKey: 'sap-backend-1', client: '100', username: 'u', password: 'p' },
       context: {}
     });
     expect(res).toEqual({ ok: true });
     expect(spy).toHaveBeenCalled();
+  });
+
+  it('returns a structured error when slotKey is invalid', async () => {
+    const res = await testConnectionResolver({
+      payload: { slotKey: 'bogus', client: '100', username: 'u', password: 'p' },
+      context: {}
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error.code).toBe('INVALID_SLOT');
+    }
   });
 });

@@ -16,8 +16,6 @@ export const Config: React.FC = () => {
       />
       <Label labelFor="target">Target (optional)</Label>
       <Textfield {...register('target')} />
-      <Label labelFor="descriptionOverride">Description override (smart value)</Label>
-      <Textfield {...register('descriptionOverride')} />
       <Label labelFor="email">Email</Label>
       <Textfield {...register('email')} defaultValue="{{initiator.emailAddress}}" />
     </Form>

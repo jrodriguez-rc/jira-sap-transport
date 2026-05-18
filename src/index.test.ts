@@ -2,13 +2,19 @@ import { describe, it, expect, vi } from 'vitest';
 
 // Mock @forge/api before importing index, since index imports resolvers that
 // transitively reference @forge/api at module load time.
-vi.mock('@forge/api', () => ({
-  storage: {
+vi.mock('@forge/kvs', () => ({
+  kvs: {
     get: vi.fn(async () => undefined),
     set: vi.fn(async () => undefined),
     delete: vi.fn(async () => undefined),
     query: () => ({ where: () => ({ getMany: async () => ({ results: [] }) }) })
   },
+  WhereConditions: {
+    beginsWith: (value: string) => ({ condition: 'BEGINS_WITH', value })
+  }
+}));
+
+vi.mock('@forge/api', () => ({
   default: { asApp: () => ({ requestJira: vi.fn() }), fetch: vi.fn() },
   route: (s: TemplateStringsArray) => s.join('')
 }));
