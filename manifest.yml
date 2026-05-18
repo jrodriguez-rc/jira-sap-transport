@@ -205,6 +205,13 @@ permissions:
     - manage:jira-configuration
     - manage:jira-project
     - storage:app
+  external:
+    # Opt-in to customer-managed configurable remotes (Forge EAP). Once a deploy
+    # to production has shipped this flag, it cannot be removed from the
+    # manifest. Required because every `remote` below uses `configurable:` so
+    # the admin can set the SAP endpoint URL at install time.
+    configurable:
+      enabled: true
 
 # Each Jira installation can target up to 25 distinct SAP backends. The admin
 # configures the URL of each slot via Atlassian's native "App access" page
