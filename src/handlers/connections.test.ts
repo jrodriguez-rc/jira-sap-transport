@@ -48,7 +48,7 @@ describe('listConnectionsResolver', () => {
 describe('saveConnectionResolver', () => {
   it('persists a new connection with a generated id when missing', async () => {
     const res = await saveConnectionResolver({
-      payload: { label: 'A', hostname: 'https://dev.sap.example', client: '100', username: 'u', password: 'p' },
+      payload: { label: 'A', hostname: 'https://dev.sap.example', systemId: 'A4H', client: '100', username: 'u', password: 'p' },
       context: {}
     });
     expect(res.id).toBeTruthy();
@@ -56,46 +56,66 @@ describe('saveConnectionResolver', () => {
   });
 
   it('updates an existing connection by id', async () => {
-    store.set('connections:fixed', { id: 'fixed', label: 'old', hostname: 'https://dev.sap.example', client: '100', username: 'u', password: 'p' });
+    store.set('connections:fixed', { id: 'fixed', label: 'old', hostname: 'https://dev.sap.example', systemId: 'A4H', client: '100', username: 'u', password: 'p' });
     await saveConnectionResolver({
-      payload: { id: 'fixed', label: 'new', hostname: 'https://dev.sap.example', client: '100', username: 'u', password: 'p' },
+      payload: { id: 'fixed', label: 'new', hostname: 'https://dev.sap.example', systemId: 'A4H', client: '100', username: 'u', password: 'p' },
       context: {}
     });
     expect((store.get('connections:fixed') as { label: string }).label).toBe('new');
   });
 
+  it('uppercases the systemId on save', async () => {
+    const res = await saveConnectionResolver({
+      payload: { label: 'A', hostname: 'https://dev.sap.example', systemId: 'a4h', client: '100', username: 'u', password: 'p' },
+      context: {}
+    });
+    const stored = store.get('connections:' + res.id) as { systemId: string };
+    expect(stored.systemId).toBe('A4H');
+  });
+
   it('rejects a non-https hostname', async () => {
     await expect(saveConnectionResolver({
-      payload: { label: 'A', hostname: 'http://dev.sap.example', client: '100', username: 'u', password: 'p' },
+      payload: { label: 'A', hostname: 'http://dev.sap.example', systemId: 'A4H', client: '100', username: 'u', password: 'p' },
       context: {}
     })).rejects.toThrow(/hostname/i);
   });
 
   it('rejects an empty hostname', async () => {
     await expect(saveConnectionResolver({
-      payload: { label: 'A', hostname: '', client: '100', username: 'u', password: 'p' },
+      payload: { label: 'A', hostname: '', systemId: 'A4H', client: '100', username: 'u', password: 'p' },
       context: {}
     })).rejects.toThrow(/hostname/i);
   });
 
+  it('rejects a systemId that is not 3 alphanumeric characters', async () => {
+    await expect(saveConnectionResolver({
+      payload: { label: 'A', hostname: 'https://dev.sap.example', systemId: 'A4', client: '100', username: 'u', password: 'p' },
+      context: {}
+    })).rejects.toThrow(/systemId/);
+    await expect(saveConnectionResolver({
+      payload: { label: 'A', hostname: 'https://dev.sap.example', systemId: 'A4HX', client: '100', username: 'u', password: 'p' },
+      context: {}
+    })).rejects.toThrow(/systemId/);
+  });
+
   it('rejects clients that are not 3 digits', async () => {
     await expect(saveConnectionResolver({
-      payload: { label: 'A', hostname: 'https://dev.sap.example', client: '10', username: 'u', password: 'p' },
+      payload: { label: 'A', hostname: 'https://dev.sap.example', systemId: 'A4H', client: '10', username: 'u', password: 'p' },
       context: {}
     })).rejects.toThrow(/client/i);
   });
 
   it('rejects payloads missing label / username / password', async () => {
     await expect(saveConnectionResolver({
-      payload: { hostname: 'https://dev.sap.example', client: '100', username: 'u', password: 'p' },
+      payload: { hostname: 'https://dev.sap.example', systemId: 'A4H', client: '100', username: 'u', password: 'p' },
       context: {}
     })).rejects.toThrow(/label, username and password are required/);
   });
 
   it('reuses stored password when editing an existing connection without a new password', async () => {
-    store.set('connections:fixed', { id: 'fixed', label: 'old', hostname: 'https://x.newmethodologies.net', client: '100', username: 'u', password: 'stored-secret' });
+    store.set('connections:fixed', { id: 'fixed', label: 'old', hostname: 'https://x.newmethodologies.net', systemId: 'A4H', client: '100', username: 'u', password: 'stored-secret' });
     await saveConnectionResolver({
-      payload: { id: 'fixed', label: 'new-label', hostname: 'https://x.newmethodologies.net', client: '100', username: 'u' /* no password */ },
+      payload: { id: 'fixed', label: 'new-label', hostname: 'https://x.newmethodologies.net', systemId: 'A4H', client: '100', username: 'u' /* no password */ },
       context: {}
     });
     const updated = store.get('connections:fixed') as { label: string; password: string };
@@ -105,14 +125,14 @@ describe('saveConnectionResolver', () => {
 
   it('still rejects new connections without a password', async () => {
     await expect(saveConnectionResolver({
-      payload: { label: 'A', hostname: 'https://x.newmethodologies.net', client: '100', username: 'u' /* no password, no id */ },
+      payload: { label: 'A', hostname: 'https://x.newmethodologies.net', systemId: 'A4H', client: '100', username: 'u' /* no password, no id */ },
       context: {}
     })).rejects.toThrow(/password/i);
   });
 
   it('persists the descriptionTemplate when supplied', async () => {
     const res = await saveConnectionResolver({
-      payload: { label: 'A', hostname: 'https://x.newmethodologies.net', client: '100', username: 'u', password: 'p', descriptionTemplate: 'TPL: {{issue.key}}' },
+      payload: { label: 'A', hostname: 'https://x.newmethodologies.net', systemId: 'A4H', client: '100', username: 'u', password: 'p', descriptionTemplate: 'TPL: {{issue.key}}' },
       context: {}
     });
     const stored = store.get('connections:' + res.id) as { descriptionTemplate?: string };

@@ -39,7 +39,7 @@ async function fetchIssue(issueKey: string): Promise<unknown> {
   return res.json();
 }
 
-function toEntry(rt: RequestType): SapTransportEntry {
+function toEntry(rt: RequestType, conn: Connection): SapTransportEntry {
   return {
     requestId: rt.Request,
     type: rt.Type,
@@ -47,7 +47,8 @@ function toEntry(rt: RequestType): SapTransportEntry {
     description: rt.Description,
     createdAt: new Date().toISOString(),
     status: rt.Status,
-    statusText: rt.StatusText
+    statusText: rt.StatusText,
+    systemId: conn.systemId
   };
 }
 
@@ -79,7 +80,7 @@ export async function createTransportResolver(args: ResolverArgs<{
       target: args.payload.target ?? cfg.defaults.target
     });
 
-    const entry = toEntry(rt);
+    const entry = toEntry(rt, conn);
     const list = await getIssueTransports(args.payload.issueKey);
     await setIssueTransports(args.payload.issueKey, [...list, entry]);
 
@@ -97,10 +98,18 @@ export async function linkTransportResolver(args: ResolverArgs<{ projectId: stri
     const { conn } = await resolveConnection(args.payload.projectId);
     const client = createSapClient(conn);
     const rt = await client.getTransport(args.payload.requestId);
-    const entry = toEntry(rt);
+    const entry = toEntry(rt, conn);
     const list = await getIssueTransports(args.payload.issueKey);
-    if (!list.some((e) => e.requestId === entry.requestId)) {
+    // If the entry already exists, refresh its fields from the current
+    // Connection (notably backfilling systemId for entries created before
+    // SID was added to the model).
+    const existingIndex = list.findIndex((e) => e.requestId === entry.requestId);
+    if (existingIndex === -1) {
       await setIssueTransports(args.payload.issueKey, [...list, entry]);
+    } else {
+      const next = [...list];
+      next[existingIndex] = { ...list[existingIndex], ...entry };
+      await setIssueTransports(args.payload.issueKey, next);
     }
     logEvent('info', { action: 'issue.link', projectId: args.payload.projectId, issueKey: args.payload.issueKey, requestId: entry.requestId, durationMs: Date.now() - started, outcome: 'ok' });
     return entry;
@@ -119,7 +128,7 @@ export async function releaseTransportResolver(args: ResolverArgs<{ projectId: s
     const list = await getIssueTransports(args.payload.issueKey);
     const next = list.map((e) =>
       e.requestId === rt.Request
-        ? { ...e, status: rt.Status, statusText: rt.StatusText, releasedAt: new Date().toISOString() }
+        ? { ...e, systemId: conn.systemId, status: rt.Status, statusText: rt.StatusText, releasedAt: new Date().toISOString() }
         : e
     );
     await setIssueTransports(args.payload.issueKey, next);
@@ -139,7 +148,7 @@ export async function refreshTransportResolver(args: ResolverArgs<{ projectId: s
     const rt = await client.getTransport(args.payload.requestId);
     const list = await getIssueTransports(args.payload.issueKey);
     const next = list.map((e) =>
-      e.requestId === rt.Request ? { ...e, status: rt.Status, statusText: rt.StatusText } : e
+      e.requestId === rt.Request ? { ...e, systemId: conn.systemId, status: rt.Status, statusText: rt.StatusText } : e
     );
     await setIssueTransports(args.payload.issueKey, next);
     logEvent('info', { action: 'issue.refresh', projectId: args.payload.projectId, issueKey: args.payload.issueKey, requestId: args.payload.requestId, durationMs: Date.now() - started, outcome: 'ok' });

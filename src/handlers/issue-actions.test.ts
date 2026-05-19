@@ -88,7 +88,7 @@ vi.mock('../lib/sap-client', () => ({
   BASE_PATH: '/sap'
 }));
 
-const conn: Connection = { id: 'c1', label: 'DEV', hostname: 'https://dev.sap.example', client: '100', username: 'u', password: 'p' };
+const conn: Connection = { id: 'c1', label: 'DEV', hostname: 'https://dev.sap.example', systemId: 'A4H', client: '100', username: 'u', password: 'p' };
 const cfg: ProjectConfig = { connectionId: 'c1', projectCode: 'PRJX', descriptionTemplate: '', defaults: { type: 'K', target: 'QAS' } };
 
 beforeEach(() => {
@@ -110,6 +110,15 @@ describe('createTransportResolver', () => {
     expect(r.requestId).toBe('DEVK900123');
     const stored = issueProps.get('PROJ-1') as Array<{ requestId: string }>;
     expect(stored.map((e) => e.requestId)).toEqual(['DEVK900123']);
+  });
+
+  it('persists the Connection systemId on the saved SapTransportEntry', async () => {
+    await createTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      context: { accountId: 'acc1' }
+    });
+    const stored = issueProps.get('PROJ-1') as Array<{ systemId?: string }>;
+    expect(stored[0].systemId).toBe('A4H');
   });
 
   it('rejects when no connection is configured', async () => {
@@ -217,6 +226,17 @@ describe('refreshTransportResolver', () => {
     expect(r.status).toBe('D');
     const list = issueProps.get('PROJ-1') as Array<{ status: string }>;
     expect(list[0].status).toBe('D');
+  });
+
+  it('backfills the Connection systemId on legacy entries that lack it', async () => {
+    // Legacy entry created before systemId was added to the model.
+    issueProps.set('PROJ-1', [{ requestId: 'DEVK900123', type: 'K', target: 'QAS', description: 'x', createdAt: '2026-01-01', status: 'X', statusText: 'old' }]);
+    await refreshTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', requestId: 'DEVK900123' },
+      context: { accountId: 'acc1' }
+    });
+    const list = issueProps.get('PROJ-1') as Array<{ systemId?: string }>;
+    expect(list[0].systemId).toBe('A4H');
   });
 
   it('logs and rethrows when SAP says not found', async () => {

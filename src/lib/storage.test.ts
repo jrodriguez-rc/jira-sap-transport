@@ -72,6 +72,7 @@ const sample: Connection = {
   id: 'dev-100',
   label: 'DEV',
   hostname: 'https://dev.sap.example',
+  systemId: 'DEV',
   client: '100',
   username: 'JIRAUSR',
   password: 'secret'
@@ -103,6 +104,7 @@ describe('connections storage', () => {
       id: 'dev-100',
       label: 'DEV',
       hostname: 'https://dev.sap.example',
+      systemId: 'DEV',
       client: '100',
       username: 'JIRAUSR'
     });

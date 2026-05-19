@@ -6,6 +6,7 @@ export interface Connection {
   id: string;
   label: string;
   hostname: string;       // https URL, no trailing slash (e.g. https://sap.example.com)
+  systemId: string;       // 3-char SAP System ID (SID), e.g. A4H, DEV, PRD
   client: string;         // SAP mandant, 3 chars
   username: string;
   password: string;       // never returned to frontend
@@ -58,6 +59,10 @@ export interface SapTransportEntry {
   status: string;
   statusText: string;
   releasedAt?: string;
+  // SID of the SAP system that owns this transport. Optional for backward
+  // compatibility with entries created before the field was added; the issue
+  // panel falls back to plain text when absent.
+  systemId?: string;
 }
 
 export interface RenderResult {
