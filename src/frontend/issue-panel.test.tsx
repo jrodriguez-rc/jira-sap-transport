@@ -23,9 +23,17 @@ vi.mock('@forge/react', async (importOriginal) => {
   const Textfield = React.forwardRef<HTMLInputElement, any>((props, ref) => (
     <input ref={ref} {...props} />
   ));
+  // Default Link primitive renders as a lowercase <link> string-tag, which is
+  // an HTML head-element and not what jsdom matches with closest('a'). Mock it
+  // as a real <a> so we can assert the href the way a user would experience it.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const Link = ({ href, children, ...rest }: any) => (
+    <a href={href} {...rest}>{children}</a>
+  );
   return {
     ...actual,
     Textfield,
+    Link,
     default: { render: vi.fn(), addConfig: vi.fn() },
   };
 });
@@ -48,8 +56,10 @@ const entries: SapTransportEntry[] = [
     createdAt: '2026-01-01T00:00:00Z',
     status: 'D',
     statusText: 'Modifiable',
+    systemId: 'A4H',
   },
   {
+    // No systemId — legacy entry, must still render as plain text without link.
     requestId: 'DEVK900099',
     type: 'W',
     target: 'PRD',
@@ -77,6 +87,33 @@ describe('issue-panel App', () => {
     expect(screen.getByText('Modifiable')).toBeInTheDocument();
     expect(screen.getByText('DEVK900099')).toBeInTheDocument();
     expect(screen.getByText('Released')).toBeInTheDocument();
+  });
+
+  it('renders the request id as an Eclipse ADT deep-link when the entry carries a systemId', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'issue.list') return ok(entries);
+      return ok(undefined);
+    });
+    render(<App />);
+    const requestCell = await screen.findByText('DEVK900100');
+    // The element rendered for an entry WITH systemId should be (or be wrapped
+    // by) an <a> with the adt:// scheme. Climb to the nearest anchor.
+    const anchor = requestCell.closest('a');
+    expect(anchor).not.toBeNull();
+    expect(anchor!.getAttribute('href')).toBe(
+      'adt://A4H/sap/bc/adt/cts/transportrequests/DEVK900100',
+    );
+  });
+
+  it('renders the request id as plain text (no link) for legacy entries without systemId', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'issue.list') return ok(entries);
+      return ok(undefined);
+    });
+    render(<App />);
+    const legacyCell = await screen.findByText('DEVK900099');
+    // Legacy entries (no systemId) must NOT be wrapped in an anchor.
+    expect(legacyCell.closest('a')).toBeNull();
   });
 
   it('shows an error banner when issue.list fails', async () => {

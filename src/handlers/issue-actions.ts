@@ -39,7 +39,7 @@ async function fetchIssue(issueKey: string): Promise<unknown> {
   return res.json();
 }
 
-function toEntry(rt: RequestType): SapTransportEntry {
+function toEntry(rt: RequestType, conn: Connection): SapTransportEntry {
   return {
     requestId: rt.Request,
     type: rt.Type,
@@ -47,7 +47,8 @@ function toEntry(rt: RequestType): SapTransportEntry {
     description: rt.Description,
     createdAt: new Date().toISOString(),
     status: rt.Status,
-    statusText: rt.StatusText
+    statusText: rt.StatusText,
+    systemId: conn.systemId
   };
 }
 
@@ -79,7 +80,7 @@ export async function createTransportResolver(args: ResolverArgs<{
       target: args.payload.target ?? cfg.defaults.target
     });
 
-    const entry = toEntry(rt);
+    const entry = toEntry(rt, conn);
     const list = await getIssueTransports(args.payload.issueKey);
     await setIssueTransports(args.payload.issueKey, [...list, entry]);
 
@@ -97,7 +98,7 @@ export async function linkTransportResolver(args: ResolverArgs<{ projectId: stri
     const { conn } = await resolveConnection(args.payload.projectId);
     const client = createSapClient(conn);
     const rt = await client.getTransport(args.payload.requestId);
-    const entry = toEntry(rt);
+    const entry = toEntry(rt, conn);
     const list = await getIssueTransports(args.payload.issueKey);
     if (!list.some((e) => e.requestId === entry.requestId)) {
       await setIssueTransports(args.payload.issueKey, [...list, entry]);

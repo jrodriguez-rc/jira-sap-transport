@@ -112,6 +112,15 @@ describe('createTransportResolver', () => {
     expect(stored.map((e) => e.requestId)).toEqual(['DEVK900123']);
   });
 
+  it('persists the Connection systemId on the saved SapTransportEntry', async () => {
+    await createTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      context: { accountId: 'acc1' }
+    });
+    const stored = issueProps.get('PROJ-1') as Array<{ systemId?: string }>;
+    expect(stored[0].systemId).toBe('A4H');
+  });
+
   it('rejects when no connection is configured', async () => {
     appStore.delete('project:10001:config');
     await expect(createTransportResolver({

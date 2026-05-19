@@ -5,6 +5,7 @@ import ForgeReconciler, {
   DynamicTable,
   Heading,
   Inline,
+  Link,
   Modal,
   ModalBody,
   ModalFooter,
@@ -103,7 +104,16 @@ export const App: React.FC = () => {
   const rows = entries.map((entry) => ({
     key: entry.requestId,
     cells: [
-      { key: 'request', content: <Text>{entry.requestId}</Text> },
+      {
+        key: 'request',
+        content: entry.systemId ? (
+          <Link href={`adt://${entry.systemId}/sap/bc/adt/cts/transportrequests/${entry.requestId}`}>
+            {entry.requestId}
+          </Link>
+        ) : (
+          <Text>{entry.requestId}</Text>
+        ),
+      },
       { key: 'type', content: <Text>{TYPE_LABELS[entry.type]}</Text> },
       { key: 'description', content: <Text>{entry.description}</Text> },
       { key: 'status', content: <Text>{entry.statusText}</Text> },
