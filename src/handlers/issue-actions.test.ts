@@ -228,6 +228,17 @@ describe('refreshTransportResolver', () => {
     expect(list[0].status).toBe('D');
   });
 
+  it('backfills the Connection systemId on legacy entries that lack it', async () => {
+    // Legacy entry created before systemId was added to the model.
+    issueProps.set('PROJ-1', [{ requestId: 'DEVK900123', type: 'K', target: 'QAS', description: 'x', createdAt: '2026-01-01', status: 'X', statusText: 'old' }]);
+    await refreshTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', requestId: 'DEVK900123' },
+      context: { accountId: 'acc1' }
+    });
+    const list = issueProps.get('PROJ-1') as Array<{ systemId?: string }>;
+    expect(list[0].systemId).toBe('A4H');
+  });
+
   it('logs and rethrows when SAP says not found', async () => {
     issueProps.set('PROJ-1', [{ requestId: 'NOPE', type: 'K', target: 'QAS', description: 'x', createdAt: '2026-01-01', status: 'D', statusText: 'm' }]);
     await expect(refreshTransportResolver({
