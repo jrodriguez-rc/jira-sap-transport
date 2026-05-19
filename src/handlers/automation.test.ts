@@ -80,7 +80,7 @@ beforeEach(() => {
   issueProps.clear();
   createTransportCalls.length = 0;
   appStore.set('project:10001:config', cfg);
-  appStore.set('connections:c1', { id: 'c1', label: 'DEV', slotKey: 'sap-backend-1', client: '100', username: 'u', password: 'p' });
+  appStore.set('connections:c1', { id: 'c1', label: 'DEV', hostname: 'https://dev.sap.example', client: '100', username: 'u', password: 'p' });
 });
 
 describe('automationCreate', () => {

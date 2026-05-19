@@ -38,7 +38,7 @@ beforeEach(() => { store.clear(); });
 
 describe('listConnectionsResolver', () => {
   it('returns connections stripped of passwords', async () => {
-    store.set('connections:1', { id: '1', label: 'A', slotKey: 'sap-backend-1', client: '100', username: 'u', password: 'secret' });
+    store.set('connections:1', { id: '1', label: 'A', hostname: 'https://dev.sap.example', client: '100', username: 'u', password: 'secret' });
     const res = await listConnectionsResolver({ payload: {}, context: {} });
     expect(res[0]).not.toHaveProperty('password');
     expect(res[0].label).toBe('A');
@@ -48,7 +48,7 @@ describe('listConnectionsResolver', () => {
 describe('saveConnectionResolver', () => {
   it('persists a new connection with a generated id when missing', async () => {
     const res = await saveConnectionResolver({
-      payload: { label: 'A', slotKey: 'sap-backend-1', client: '100', username: 'u', password: 'p' },
+      payload: { label: 'A', hostname: 'https://dev.sap.example', client: '100', username: 'u', password: 'p' },
       context: {}
     });
     expect(res.id).toBeTruthy();
@@ -56,38 +56,38 @@ describe('saveConnectionResolver', () => {
   });
 
   it('updates an existing connection by id', async () => {
-    store.set('connections:fixed', { id: 'fixed', label: 'old', slotKey: 'sap-backend-1', client: '100', username: 'u', password: 'p' });
+    store.set('connections:fixed', { id: 'fixed', label: 'old', hostname: 'https://dev.sap.example', client: '100', username: 'u', password: 'p' });
     await saveConnectionResolver({
-      payload: { id: 'fixed', label: 'new', slotKey: 'sap-backend-1', client: '100', username: 'u', password: 'p' },
+      payload: { id: 'fixed', label: 'new', hostname: 'https://dev.sap.example', client: '100', username: 'u', password: 'p' },
       context: {}
     });
     expect((store.get('connections:fixed') as { label: string }).label).toBe('new');
   });
 
-  it('rejects an unknown slotKey', async () => {
+  it('rejects a non-https hostname', async () => {
     await expect(saveConnectionResolver({
-      payload: { label: 'A', slotKey: 'sap-backend-99', client: '100', username: 'u', password: 'p' },
+      payload: { label: 'A', hostname: 'http://dev.sap.example', client: '100', username: 'u', password: 'p' },
       context: {}
-    })).rejects.toThrow(/slot/i);
+    })).rejects.toThrow(/hostname/i);
   });
 
-  it('rejects an empty slotKey', async () => {
+  it('rejects an empty hostname', async () => {
     await expect(saveConnectionResolver({
-      payload: { label: 'A', slotKey: '', client: '100', username: 'u', password: 'p' },
+      payload: { label: 'A', hostname: '', client: '100', username: 'u', password: 'p' },
       context: {}
-    })).rejects.toThrow(/slot/i);
+    })).rejects.toThrow(/hostname/i);
   });
 
   it('rejects clients that are not 3 digits', async () => {
     await expect(saveConnectionResolver({
-      payload: { label: 'A', slotKey: 'sap-backend-1', client: '10', username: 'u', password: 'p' },
+      payload: { label: 'A', hostname: 'https://dev.sap.example', client: '10', username: 'u', password: 'p' },
       context: {}
     })).rejects.toThrow(/client/i);
   });
 
   it('rejects payloads missing label / username / password', async () => {
     await expect(saveConnectionResolver({
-      payload: { slotKey: 'sap-backend-1', client: '100', username: 'u', password: 'p' },
+      payload: { hostname: 'https://dev.sap.example', client: '100', username: 'u', password: 'p' },
       context: {}
     })).rejects.toThrow(/label, username and password are required/);
   });
@@ -95,7 +95,7 @@ describe('saveConnectionResolver', () => {
 
 describe('deleteConnectionResolver', () => {
   it('removes the entry', async () => {
-    store.set('connections:1', { id: '1', label: 'A', slotKey: 'sap-backend-1', client: '100', username: 'u', password: 'p' });
+    store.set('connections:1', { id: '1', label: 'A', hostname: 'https://dev.sap.example', client: '100', username: 'u', password: 'p' });
     await deleteConnectionResolver({ payload: { id: '1' }, context: {} });
     expect(store.size).toBe(0);
   });
@@ -110,21 +110,21 @@ describe('testConnectionResolver', () => {
       getTransport: vi.fn()
     } as never);
     const res = await testConnectionResolver({
-      payload: { slotKey: 'sap-backend-1', client: '100', username: 'u', password: 'p' },
+      payload: { hostname: 'https://dev.sap.example', client: '100', username: 'u', password: 'p' },
       context: {}
     });
     expect(res).toEqual({ ok: true });
     expect(spy).toHaveBeenCalled();
   });
 
-  it('returns a structured error when slotKey is invalid', async () => {
+  it('returns a structured error when hostname is invalid', async () => {
     const res = await testConnectionResolver({
-      payload: { slotKey: 'bogus', client: '100', username: 'u', password: 'p' },
+      payload: { hostname: 'not-a-url', client: '100', username: 'u', password: 'p' },
       context: {}
     });
     expect(res.ok).toBe(false);
     if (!res.ok) {
-      expect(res.error.code).toBe('INVALID_SLOT');
+      expect(res.error.code).toBe('INVALID_HOSTNAME');
     }
   });
 });

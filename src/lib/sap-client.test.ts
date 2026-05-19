@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { basicAuthHeader, buildRemotePath, BASE_PATH, parseODataError, mapSapMessages, createSapClient } from './sap-client';
-import type { InvokeRemoteImpl } from './sap-client';
+import { buildUrl, basicAuthHeader, BASE_PATH, parseODataError, mapSapMessages, createSapClient } from './sap-client';
+import type { FetchLike } from './sap-client';
 import { SapError } from './errors';
-import type { SapClientCallContext } from './types';
+import { setupServer } from 'msw/node';
+import { http, HttpResponse } from 'msw';
+import { afterAll, afterEach, beforeAll } from 'vitest';
 import createOk from '../__tests__/fixtures/create-ok.json';
 import releaseOk from '../__tests__/fixtures/release-ok.json';
 import releaseWarning from '../__tests__/fixtures/release-warning.json';
@@ -10,14 +12,24 @@ import createError from '../__tests__/fixtures/create-error.json';
 import get404 from '../__tests__/fixtures/get-404.json';
 import serviceRoot from '../__tests__/fixtures/service-root.json';
 
-describe('buildRemotePath', () => {
+describe('buildUrl', () => {
+  const conn = { hostname: 'https://dev.sap.lan', client: '100', username: 'u', password: 'p' };
+
   it('joins base path and appends sap-client', () => {
-    expect(buildRemotePath('100', '/Request')).toBe(`${BASE_PATH}/Request?sap-client=100`);
+    expect(buildUrl(conn, '/Request')).toBe(
+      `https://dev.sap.lan${BASE_PATH}/Request?sap-client=100`
+    );
   });
 
   it('uses & when the path already has a query string', () => {
-    expect(buildRemotePath('100', "/Request('X')?$select=Request")).toBe(
-      `${BASE_PATH}/Request('X')?$select=Request&sap-client=100`
+    expect(buildUrl(conn, "/Request('X')?$select=Request")).toBe(
+      `https://dev.sap.lan${BASE_PATH}/Request('X')?$select=Request&sap-client=100`
+    );
+  });
+
+  it('strips a trailing slash from hostname', () => {
+    expect(buildUrl({ ...conn, hostname: 'https://dev.sap.lan/' }, '/x')).toBe(
+      `https://dev.sap.lan${BASE_PATH}/x?sap-client=100`
     );
   });
 });
@@ -78,76 +90,116 @@ describe('mapSapMessages', () => {
   });
 });
 
-// ---- programmable invokeRemote test harness -----------------------------------
+// ---- msw integration tests ----------------------------------------------------
 
+const HOST = 'https://dev.sap.lan';
 const CLIENT = '100';
-const conn: SapClientCallContext = { slotKey: 'sap-backend-1', client: CLIENT, username: 'u', password: 'p' };
 
-interface FakeResponseInit {
-  status: number;
-  headers?: Record<string, string>;
-  body?: unknown;
-}
+// msw v2 routes via path-to-regexp v6 — literal parens in URLs MUST be escaped
+// with a backslash. Otherwise msw interprets `(...)` as a capture group.
+const handlers = [
+  http.get(`${HOST}${BASE_PATH}/`, ({ request }) => {
+    const u = new URL(request.url);
+    if (u.searchParams.get('sap-client') !== CLIENT) return new HttpResponse(null, { status: 400 });
+    return HttpResponse.json(serviceRoot);
+  }),
+  http.post(`${HOST}${BASE_PATH}/Request/SAP__self.Create`, async ({ request }) => {
+    const u = new URL(request.url);
+    if (u.searchParams.get('sap-client') !== CLIENT) return new HttpResponse(null, { status: 400 });
+    const body = (await request.json()) as { Target?: string };
+    if (body.Target === 'BAD') return HttpResponse.json(createError, { status: 400 });
+    return HttpResponse.json(createOk, { status: 201 });
+  }),
+  http.post(`${HOST}${BASE_PATH}/Request\\('DEVK900123'\\)/SAP__self.Release`, () => HttpResponse.json(releaseOk)),
+  http.post(`${HOST}${BASE_PATH}/Request\\('DEVK900999'\\)/SAP__self.Release`, () => HttpResponse.json(releaseWarning)),
+  http.get(`${HOST}${BASE_PATH}/Request\\('DEVK900123'\\)`, () => HttpResponse.json(createOk)),
+  http.get(`${HOST}${BASE_PATH}/Request\\('NOPE'\\)`, () => HttpResponse.json(get404, { status: 404 })),
+  http.get(`${HOST}${BASE_PATH}/Request\\('UNAUTHZ'\\)`, () => HttpResponse.json({}, { status: 401 }))
+];
 
-function fakeRes({ status, headers = {}, body }: FakeResponseInit) {
-  const h = new Map(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
-  return Promise.resolve({
-    status,
-    json: async () => (body === undefined ? {} : body),
-    headers: { get: (n: string) => h.get(n.toLowerCase()) ?? null }
-  });
-}
+const server = setupServer(...handlers);
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
 
-type Route = (req: { path: string; method: string; headers: Record<string, string>; body?: string }) => ReturnType<typeof fakeRes> | null;
-
-function makeInvokeRemote(routes: Route[]): { impl: InvokeRemoteImpl; calls: Array<{ key: string; path: string; method: string; headers: Record<string, string>; body?: string }> } {
-  const calls: Array<{ key: string; path: string; method: string; headers: Record<string, string>; body?: string }> = [];
-  const impl: InvokeRemoteImpl = (key, opts) => {
-    const req = {
-      path: opts.path,
-      method: opts.method ?? 'GET',
-      headers: opts.headers ?? {},
-      body: opts.body
-    };
-    calls.push({ key, ...req });
-    for (const r of routes) {
-      const out = r(req);
-      if (out) return out;
-    }
-    throw new Error(`Unrouted: ${req.method} ${req.path}`);
-  };
-  return { impl, calls };
-}
-
-// Convenience: a route that responds to the service-root call.
-const serviceRootRoute: Route = (req) =>
-  req.method === 'GET' && req.path === `${BASE_PATH}/?sap-client=${CLIENT}`
-    ? fakeRes({ status: 200, body: serviceRoot, headers: { 'content-type': 'application/json' } })
-    : null;
+const conn = { hostname: HOST, client: CLIENT, username: 'u', password: 'p' };
 
 describe('createSapClient.testConnection', () => {
   it('returns ok:true on a valid service-root response', async () => {
-    const { impl } = makeInvokeRemote([serviceRootRoute]);
-    const client = createSapClient(conn, impl);
+    const client = createSapClient(conn, globalThis.fetch as never);
     expect(await client.testConnection()).toEqual({ ok: true });
   });
+});
 
-  it('returns ok:false with BAD_SERVICE when the service root has no Request entity set', async () => {
-    const { impl } = makeInvokeRemote([
-      (req) => req.method === 'GET' && req.path.startsWith(`${BASE_PATH}/?`)
-        ? fakeRes({ status: 200, body: { '@odata.context': '$metadata', value: [] } })
-        : null
-    ]);
-    const res = await createSapClient(conn, impl).testConnection();
+describe('createSapClient.createTransport', () => {
+  it('creates a transport and returns the entity', async () => {
+    const client = createSapClient(conn, globalThis.fetch as never);
+    const r = await client.createTransport({ description: 'PROJ-1 Hello', type: 'K', email: 'a@b.com', target: 'QAS' });
+    expect(r.Request).toBe('DEVK900123');
+    expect(r.Status).toBe('D');
+  });
+
+  it('throws SapError parsed from the OData response on 4xx', async () => {
+    const client = createSapClient(conn, globalThis.fetch as never);
+    await expect(
+      client.createTransport({ description: 'X', type: 'K', email: 'a@b.com', target: 'BAD' })
+    ).rejects.toMatchObject({ code: 'INVALID_TARGET', httpStatus: 400 });
+  });
+
+  it('throws RangeError when description exceeds 60 chars', async () => {
+    const client = createSapClient(conn, globalThis.fetch as never);
+    await expect(
+      client.createTransport({ description: 'a'.repeat(61), type: 'K', email: 'a@b.com' })
+    ).rejects.toBeInstanceOf(RangeError);
+  });
+});
+
+describe('createSapClient.releaseTransport', () => {
+  it('returns the entity on success', async () => {
+    const r = await createSapClient(conn, globalThis.fetch as never).releaseTransport('DEVK900123');
+    expect(r.Status).toBe('R');
+  });
+
+  it('still resolves with warnings in SAP__Messages', async () => {
+    const r = await createSapClient(conn, globalThis.fetch as never).releaseTransport('DEVK900999');
+    expect(r.SAP__Messages?.[0].numericSeverity).toBe(2);
+  });
+});
+
+describe('createSapClient.getTransport', () => {
+  it('returns the entity', async () => {
+    const r = await createSapClient(conn, globalThis.fetch as never).getTransport('DEVK900123');
+    expect(r.Request).toBe('DEVK900123');
+  });
+
+  it('throws SapError on 404', async () => {
+    await expect(createSapClient(conn, globalThis.fetch as never).getTransport('NOPE')).rejects.toMatchObject({
+      code: 'NOT_FOUND', httpStatus: 404
+    });
+  });
+
+  it('throws SapError with code AUTH on 401', async () => {
+    await expect(createSapClient(conn, globalThis.fetch as never).getTransport('UNAUTHZ')).rejects.toMatchObject({
+      code: 'AUTH', httpStatus: 401
+    });
+  });
+});
+
+describe('createSapClient.testConnection extra branches', () => {
+  it('returns ok:false with code BAD_SERVICE when the service root has no Request entity set', async () => {
+    server.use(
+      http.get(`${HOST}${BASE_PATH}/`, () => HttpResponse.json({ '@odata.context': '$metadata', value: [] }))
+    );
+    const res = await createSapClient(conn, globalThis.fetch as never).testConnection();
     expect(res.ok).toBe(false);
     if (!res.ok) {
       expect(res.error.code).toBe('BAD_SERVICE');
     }
   });
 
-  it('returns ok:false with NETWORK when invokeRemote itself throws', async () => {
-    const throwing: InvokeRemoteImpl = async () => { throw new Error('connect timeout'); };
-    const res = await createSapClient(conn, throwing).testConnection();
+  it('returns ok:false with code NETWORK when fetch itself throws', async () => {
+    const throwingFetch = async () => { throw new Error('connect timeout'); };
+    const res = await createSapClient(conn, throwingFetch as never).testConnection();
     expect(res.ok).toBe(false);
     if (!res.ok) {
       expect(res.error.code).toBe('NETWORK');
@@ -156,12 +208,12 @@ describe('createSapClient.testConnection', () => {
   });
 
   it('returns ok:false with the OData error when the service root returns non-200', async () => {
-    const { impl } = makeInvokeRemote([
-      (req) => req.method === 'GET' && req.path.startsWith(`${BASE_PATH}/?`)
-        ? fakeRes({ status: 500, body: { error: { code: 'BOOM', message: { value: 'down' } } } })
-        : null
-    ]);
-    const res = await createSapClient(conn, impl).testConnection();
+    server.use(
+      http.get(`${HOST}${BASE_PATH}/`, () =>
+        HttpResponse.json({ error: { code: 'BOOM', message: { value: 'down' } } }, { status: 500 })
+      )
+    );
+    const res = await createSapClient(conn, globalThis.fetch as never).testConnection();
     expect(res.ok).toBe(false);
     if (!res.ok) {
       expect(res.error.code).toBe('BOOM');
@@ -170,145 +222,33 @@ describe('createSapClient.testConnection', () => {
   });
 });
 
-describe('createSapClient.createTransport', () => {
-  it('creates a transport and returns the entity', async () => {
-    const { impl } = makeInvokeRemote([
-      (req) =>
-        req.method === 'POST' && req.path.startsWith(`${BASE_PATH}/Request/SAP__self.Create`)
-          ? fakeRes({ status: 201, body: createOk })
-          : null
-    ]);
-    const r = await createSapClient(conn, impl).createTransport({ description: 'PROJ-1 Hello', type: 'K', email: 'a@b.com', target: 'QAS' });
-    expect(r.Request).toBe('DEVK900123');
-    expect(r.Status).toBe('D');
-  });
-
-  it('forwards client + auth to invokeRemote and uses slotKey as the remote key', async () => {
-    const { impl, calls } = makeInvokeRemote([
-      (req) =>
-        req.method === 'POST' && req.path.startsWith(`${BASE_PATH}/Request/SAP__self.Create`)
-          ? fakeRes({ status: 201, body: createOk })
-          : null
-    ]);
-    await createSapClient(conn, impl).createTransport({ description: 'X', type: 'K', email: 'a@b.com' });
-    expect(calls[0].key).toBe('sap-backend-1');
-    expect(calls[0].path).toContain(`sap-client=${CLIENT}`);
-    expect(calls[0].headers.Authorization).toMatch(/^Basic /);
-  });
-
-  it('throws SapError parsed from the OData response on 4xx', async () => {
-    const { impl } = makeInvokeRemote([
-      (req) =>
-        req.method === 'POST' && req.path.startsWith(`${BASE_PATH}/Request/SAP__self.Create`)
-          ? fakeRes({ status: 400, body: createError })
-          : null
-    ]);
-    await expect(
-      createSapClient(conn, impl).createTransport({ description: 'X', type: 'K', email: 'a@b.com', target: 'BAD' })
-    ).rejects.toMatchObject({ code: 'INVALID_TARGET', httpStatus: 400 });
-  });
-
-  it('throws RangeError when description exceeds 60 chars', async () => {
-    const { impl } = makeInvokeRemote([]);
-    await expect(
-      createSapClient(conn, impl).createTransport({ description: 'a'.repeat(61), type: 'K', email: 'a@b.com' })
-    ).rejects.toBeInstanceOf(RangeError);
-  });
-});
-
-describe('createSapClient.releaseTransport', () => {
-  it('returns the entity on success', async () => {
-    const { impl } = makeInvokeRemote([
-      (req) =>
-        req.method === 'POST' && req.path.includes("/Request('DEVK900123')/SAP__self.Release")
-          ? fakeRes({ status: 200, body: releaseOk })
-          : null
-    ]);
-    const r = await createSapClient(conn, impl).releaseTransport('DEVK900123');
-    expect(r.Status).toBe('R');
-  });
-
-  it('still resolves with warnings in SAP__Messages', async () => {
-    const { impl } = makeInvokeRemote([
-      (req) =>
-        req.method === 'POST' && req.path.includes("/Request('DEVK900999')/SAP__self.Release")
-          ? fakeRes({ status: 200, body: releaseWarning })
-          : null
-    ]);
-    const r = await createSapClient(conn, impl).releaseTransport('DEVK900999');
-    expect(r.SAP__Messages?.[0].numericSeverity).toBe(2);
-  });
-});
-
-describe('createSapClient.getTransport', () => {
-  it('returns the entity', async () => {
-    const { impl } = makeInvokeRemote([
-      (req) =>
-        req.method === 'GET' && req.path.includes("/Request('DEVK900123')")
-          ? fakeRes({ status: 200, body: createOk })
-          : null
-    ]);
-    const r = await createSapClient(conn, impl).getTransport('DEVK900123');
-    expect(r.Request).toBe('DEVK900123');
-  });
-
-  it('throws SapError on 404', async () => {
-    const { impl } = makeInvokeRemote([
-      (req) =>
-        req.method === 'GET' && req.path.includes("/Request('NOPE')")
-          ? fakeRes({ status: 404, body: get404 })
-          : null
-    ]);
-    await expect(createSapClient(conn, impl).getTransport('NOPE')).rejects.toMatchObject({
-      code: 'NOT_FOUND', httpStatus: 404
-    });
-  });
-
-  it('throws SapError with code AUTH on 401', async () => {
-    const { impl } = makeInvokeRemote([
-      (req) =>
-        req.method === 'GET' && req.path.includes("/Request('UNAUTHZ')")
-          ? fakeRes({ status: 401, body: {} })
-          : null
-    ]);
-    await expect(createSapClient(conn, impl).getTransport('UNAUTHZ')).rejects.toMatchObject({
-      code: 'AUTH', httpStatus: 401
-    });
-  });
-});
-
 describe('createSapClient CSRF retry — negative cases', () => {
   it('does NOT fetch CSRF token for GET 403 (no retry on safe methods)', async () => {
     let csrfFetchCount = 0;
-    const { impl } = makeInvokeRemote([
-      (req) => {
-        if (req.method === 'GET' && req.path.includes("/Request('FORBID')")) {
-          return fakeRes({ status: 403, body: {} });
-        }
-        if (req.method === 'GET' && req.path === `${BASE_PATH}/?sap-client=${CLIENT}` && req.headers['x-csrf-token'] === 'Fetch') {
+    server.use(
+      http.get(`${HOST}${BASE_PATH}/Request\\('FORBID'\\)`, () => new HttpResponse(null, { status: 403 })),
+      http.get(`${HOST}${BASE_PATH}/`, ({ request }) => {
+        if (request.headers.get('x-csrf-token') === 'Fetch') {
           csrfFetchCount += 1;
-          return fakeRes({ status: 200, body: serviceRoot });
         }
-        return null;
-      }
-    ]);
-    await expect(createSapClient(conn, impl).getTransport('FORBID')).rejects.toMatchObject({ httpStatus: 403 });
+        return HttpResponse.json(serviceRoot);
+      })
+    );
+    await expect(createSapClient(conn, globalThis.fetch as never).getTransport('FORBID')).rejects.toMatchObject({ httpStatus: 403 });
     expect(csrfFetchCount).toBe(0);
   });
 
   it('throws CSRF_FETCH_FAILED when SAP demands CSRF but the fetch returns no token', async () => {
-    const { impl } = makeInvokeRemote([
-      (req) =>
-        req.method === 'POST' && req.path.startsWith(`${BASE_PATH}/Request/SAP__self.Create`)
-          ? fakeRes({ status: 403, headers: { 'x-csrf-token': 'Required' }, body: {} })
-          : null,
-      (req) =>
-        req.method === 'GET' && req.path === `${BASE_PATH}/?sap-client=${CLIENT}` && req.headers['x-csrf-token'] === 'Fetch'
-          ? fakeRes({ status: 200, body: serviceRoot })
-          : null
-    ]);
+    server.use(
+      http.post(`${HOST}${BASE_PATH}/Request/SAP__self.Create`, () =>
+        new HttpResponse(null, { status: 403, headers: { 'x-csrf-token': 'Required' } })
+      ),
+      http.get(`${HOST}${BASE_PATH}/`, () =>
+        new HttpResponse(JSON.stringify(serviceRoot), { status: 200, headers: { 'content-type': 'application/json' } })
+      )
+    );
     await expect(
-      createSapClient(conn, impl).createTransport({ description: 'X', type: 'K', email: 'a@b.com' })
+      createSapClient(conn, globalThis.fetch as never).createTransport({ description: 'X', type: 'K', email: 'a@b.com' })
     ).rejects.toMatchObject({ code: 'CSRF_FETCH_FAILED', httpStatus: 403 });
   });
 });
@@ -316,24 +256,30 @@ describe('createSapClient CSRF retry — negative cases', () => {
 describe('createSapClient CSRF retry', () => {
   it('fetches token on 403 with x-csrf-token: Required, then retries POST with the token', async () => {
     let phase: 'first' | 'fetch' | 'retry' = 'first';
-    const { impl } = makeInvokeRemote([
-      (req) => {
-        if (req.method === 'POST' && req.path.startsWith(`${BASE_PATH}/Request/SAP__self.Create`)) {
-          if (phase === 'first') {
-            phase = 'fetch';
-            return fakeRes({ status: 403, headers: { 'x-csrf-token': 'Required' }, body: {} });
-          }
-          if (req.headers['x-csrf-token'] !== 'ABCD1234') return fakeRes({ status: 403, body: {} });
-          return fakeRes({ status: 201, body: createOk });
+    server.use(
+      http.post(`${HOST}${BASE_PATH}/Request/SAP__self.Create`, ({ request }) => {
+        if (phase === 'first') {
+          phase = 'fetch';
+          return new HttpResponse(null, { status: 403, headers: { 'x-csrf-token': 'Required' } });
         }
-        if (req.method === 'GET' && req.path === `${BASE_PATH}/?sap-client=${CLIENT}` && req.headers['x-csrf-token'] === 'Fetch') {
-          phase = 'retry';
-          return fakeRes({ status: 200, headers: { 'x-csrf-token': 'ABCD1234' }, body: serviceRoot });
+        // phase === 'retry'
+        const token = request.headers.get('x-csrf-token');
+        if (token !== 'ABCD1234') return new HttpResponse(null, { status: 403 });
+        return HttpResponse.json(createOk, { status: 201 });
+      }),
+      http.get(`${HOST}${BASE_PATH}/`, ({ request }) => {
+        if (request.headers.get('x-csrf-token') !== 'Fetch') {
+          return HttpResponse.json(serviceRoot);
         }
-        return null;
-      }
-    ]);
-    const client = createSapClient(conn, impl);
+        phase = 'retry';
+        return new HttpResponse(JSON.stringify(serviceRoot), {
+          status: 200,
+          headers: { 'x-csrf-token': 'ABCD1234', 'content-type': 'application/json' }
+        });
+      })
+    );
+
+    const client = createSapClient(conn, globalThis.fetch as never);
     const r = await client.createTransport({ description: 'X', type: 'K', email: 'a@b.com' });
     expect(r.Request).toBe('DEVK900123');
   });
@@ -341,50 +287,66 @@ describe('createSapClient CSRF retry', () => {
 
 describe('createSapClient CSRF + session cookie', () => {
   it('captures set-cookie on Fetch and replays it as Cookie on retry', async () => {
-    let phase: 'first' | 'fetch' | 'retry' = 'first';
-    const { impl, calls } = makeInvokeRemote([
-      (req) => {
-        if (req.method === 'POST' && req.path.startsWith(`${BASE_PATH}/Request/SAP__self.Create`)) {
-          if (phase === 'first') {
-            phase = 'fetch';
-            return fakeRes({ status: 403, headers: { 'x-csrf-token': 'Required' }, body: {} });
-          }
-          return fakeRes({ status: 201, body: createOk });
-        }
-        if (req.method === 'GET' && req.path === `${BASE_PATH}/?sap-client=${CLIENT}` && req.headers['x-csrf-token'] === 'Fetch') {
-          phase = 'retry';
-          return fakeRes({
-            status: 200,
-            headers: {
-              'x-csrf-token': 'TOKEN_X',
-              'set-cookie': 'SAP_SESSIONID_NPL_001=ABCDEF; Path=/; HttpOnly'
-            },
-            body: serviceRoot
-          });
-        }
-        return null;
-      }
-    ]);
+    // Use a hand-rolled fetch stub (rather than globalThis.fetch + msw) so we can
+    // assert on exactly what the client passes as the Cookie header, without
+    // undici's auto-tracking cookie jar muddying the assertion.
+    type FetchInit = { method?: string; headers?: Record<string, string>; body?: string };
+    const calls: Array<{ url: string; init: FetchInit }> = [];
 
-    const client = createSapClient(conn, impl);
+    function makeRes(status: number, headers: Record<string, string>, body: unknown) {
+      const h = new Map(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
+      return Promise.resolve({
+        status,
+        json: async () => body,
+        headers: { get: (n: string) => h.get(n.toLowerCase()) ?? null }
+      });
+    }
+
+    let phase: 'first' | 'fetch' | 'retry' = 'first';
+    const fakeFetch: FetchLike = (url, init) => {
+      calls.push({ url, init: init ?? {} });
+      const method = init?.method ?? 'GET';
+      if (method === 'POST' && url.includes('/Request/SAP__self.Create')) {
+        if (phase === 'first') {
+          phase = 'fetch';
+          return makeRes(403, { 'x-csrf-token': 'Required' }, null);
+        }
+        return makeRes(201, { 'content-type': 'application/json' }, createOk);
+      }
+      if (method === 'GET' && (init?.headers as Record<string, string> | undefined)?.['x-csrf-token'] === 'Fetch') {
+        phase = 'retry';
+        return makeRes(
+          200,
+          {
+            'x-csrf-token': 'TOKEN_X',
+            'set-cookie': 'SAP_SESSIONID_NPL_001=ABCDEF; Path=/; HttpOnly',
+            'content-type': 'application/json'
+          },
+          serviceRoot
+        );
+      }
+      return makeRes(200, { 'content-type': 'application/json' }, serviceRoot);
+    };
+
+    const client = createSapClient(conn, fakeFetch);
     const r = await client.createTransport({ description: 'X', type: 'K', email: 'a@b.com' });
     expect(r.Request).toBe('DEVK900123');
 
     // Three calls: the initial POST (403), the CSRF Fetch GET, and the retry POST.
     expect(calls).toHaveLength(3);
     const retry = calls[2];
-    expect(retry.method).toBe('POST');
-    expect(retry.headers['x-csrf-token']).toBe('TOKEN_X');
-    expect(retry.headers['Cookie']).toBe('SAP_SESSIONID_NPL_001=ABCDEF');
+    expect(retry.init.method).toBe('POST');
+    expect(retry.init.headers?.['x-csrf-token']).toBe('TOKEN_X');
+    expect(retry.init.headers?.['Cookie']).toBe('SAP_SESSIONID_NPL_001=ABCDEF');
   });
 });
 
-describe('default invokeRemote bridge', () => {
-  it('delegates to @forge/api invokeRemote when no impl is provided', async () => {
+describe('default fetch bridge', () => {
+  it('delegates to @forge/api fetch when no impl is provided', async () => {
     vi.resetModules();
     vi.doMock('@forge/api', () => ({
       default: {
-        invokeRemote: vi.fn(async () => ({
+        fetch: vi.fn(async () => ({
           status: 200,
           json: async () => serviceRoot,
           headers: { get: () => null }
@@ -395,8 +357,8 @@ describe('default invokeRemote bridge', () => {
     const c = mod.createSapClient(conn);
     const res = await c.testConnection();
     expect(res).toEqual({ ok: true });
-    const api = (await import('@forge/api')).default as unknown as { invokeRemote: { mock: { calls: unknown[] } } };
-    expect(api.invokeRemote.mock.calls.length).toBeGreaterThan(0);
+    const api = (await import('@forge/api')).default as unknown as { fetch: { mock: { calls: unknown[] } } };
+    expect(api.fetch.mock.calls.length).toBeGreaterThan(0);
     vi.doUnmock('@forge/api');
   });
 });

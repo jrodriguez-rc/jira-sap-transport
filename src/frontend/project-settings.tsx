@@ -128,7 +128,7 @@ export const App: React.FC = () => {
                 ? {
                     id: 'override',
                     label: 'override',
-                    slotKey: '',
+                    hostname: '',
                     client: '',
                     username: '',
                     password: '',
@@ -158,34 +158,20 @@ export const App: React.FC = () => {
       )}
       {cfg.connectionOverride && (
         <Stack space="space.100">
-          <Label labelFor="ov-slot">Backend slot</Label>
-          <Select
-            options={Array.from({ length: 25 }, (_v, i) => ({
-              label: `Slot ${i + 1} (sap-backend-${i + 1})`,
-              value: `sap-backend-${i + 1}`,
-            }))}
-            value={
-              cfg.connectionOverride.slotKey
-                ? {
-                    label: cfg.connectionOverride.slotKey,
-                    value: cfg.connectionOverride.slotKey,
-                  }
-                : undefined
-            }
-            onChange={(opt) => {
-              const o = opt as SelectOption | null;
+          <Label labelFor="ov-hostname">Hostname (https URL)</Label>
+          <Textfield
+            placeholder="https://sap.example.com"
+            value={cfg.connectionOverride.hostname}
+            onChange={(e) =>
               setCfg({
                 ...cfg,
                 connectionOverride: {
                   ...cfg.connectionOverride!,
-                  slotKey: o?.value ?? '',
+                  hostname: (e.target as { value?: string }).value ?? '',
                 },
-              });
-            }}
+              })
+            }
           />
-          <Text>
-            Configure the URL of this slot in Apps → Manage apps → SAP Transport → App access.
-          </Text>
           <Label labelFor="ov-client">Client (3 digits)</Label>
           <Textfield
             value={cfg.connectionOverride.client}
