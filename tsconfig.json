@@ -12,5 +12,10 @@
     "isolatedModules": true,
     "types": ["vitest/globals", "node", "@testing-library/jest-dom"]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "static/issue-panel/src/**/*.ts",
+    "static/issue-panel/src/**/*.tsx"
+  ]
 }

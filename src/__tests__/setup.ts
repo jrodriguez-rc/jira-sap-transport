@@ -18,6 +18,27 @@ if (!g.__bridge) {
   g.__bridge = { callBridge: async () => undefined };
 }
 
+// `@atlaskit/tokens` (a transitive dep of every @atlaskit/* component used by
+// the Custom UI issue panel) calls `window.matchMedia` at module init to wire
+// up its color-mode listeners. jsdom doesn't implement matchMedia, so without
+// this stub the import throws before any test in the issue-panel suite runs.
+// Guarded with `typeof window` so the node-only suites stay untouched.
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
 // React DOM emits warnings when JSX uses uppercase element names that aren't
 // known components — @forge/react ships all UI Kit primitives as plain string
 // tags (`Button`, `Label`, `Stack`…), so JSDOM-based tests log thousands of

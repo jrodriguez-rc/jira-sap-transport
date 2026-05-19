@@ -3,16 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19"
   },
   "scripts": {
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "build:issue-panel": "vite build --config static/issue-panel/vite.config.ts"
   },
   "dependencies": {
+    "@atlaskit/button": "^23.11.6",
+    "@atlaskit/css-reset": "^7.4.5",
+    "@atlaskit/dynamic-table": "^18.4.2",
+    "@atlaskit/heading": "^5.4.2",
+    "@atlaskit/modal-dialog": "^15.0.4",
+    "@atlaskit/section-message": "^8.12.15",
+    "@atlaskit/textfield": "^8.3.2",
     "@forge/api": "^4.0.0",
+    "@forge/bridge": "^4.0.0",
     "@forge/kvs": "^1.6.3",
     "@forge/react": "^11.16.0",
     "@forge/resolver": "^1.6.0",
@@ -25,12 +34,14 @@
     "@types/node": "^20.0.0",
     "@types/react": "^18.3.28",
     "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^6.0.2",
     "@vitest/coverage-v8": "^4.0.0",
     "jsdom": "^29.1.1",
     "msw": "^2.3.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "typescript": "^5.4.0",
+    "vite": "^8.0.13",
     "vitest": "^4.0.0"
   },
   "overrides": {

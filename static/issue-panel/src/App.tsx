@@ -1,23 +1,18 @@
 import React, { useEffect, useState } from 'react';
-import ForgeReconciler, {
-  Button,
-  ButtonGroup,
-  DynamicTable,
-  Heading,
-  Inline,
-  Modal,
+import Button from '@atlaskit/button/new';
+import DynamicTable from '@atlaskit/dynamic-table';
+import Heading from '@atlaskit/heading';
+import Modal, {
   ModalBody,
   ModalFooter,
   ModalHeader,
   ModalTitle,
   ModalTransition,
-  SectionMessage,
-  Stack,
-  Text,
-  Textfield,
-} from '@forge/react';
-import { invoke, view } from '@forge/bridge';
-import type { SapTransportEntry, TransportType } from '../lib/types';
+} from '@atlaskit/modal-dialog';
+import SectionMessage from '@atlaskit/section-message';
+import Textfield from '@atlaskit/textfield';
+import { invoke, router, view } from '@forge/bridge';
+import type { SapTransportEntry, TransportType } from './types';
 
 interface IssueContext {
   extension: {
@@ -28,13 +23,25 @@ interface IssueContext {
 
 type ResolverResult<T> =
   | { ok: true; data: T }
-  | { ok: false; error: { code: string; message: string; severity?: string; target?: string; httpStatus?: number } };
+  | {
+      ok: false;
+      error: {
+        code: string;
+        message: string;
+        severity?: string;
+        target?: string;
+        httpStatus?: number;
+      };
+    };
 
 const TYPE_LABELS: Record<TransportType, string> = {
   K: 'Workbench',
   W: 'Customizing',
   T: 'Copy',
 };
+
+const buildAdtUrl = (systemId: string, requestId: string): string =>
+  `adt://${systemId}/sap/bc/adt/cts/transportrequests/${requestId}`;
 
 export const App: React.FC = () => {
   const [projectId, setProjectId] = useState<string>('');
@@ -63,9 +70,29 @@ export const App: React.FC = () => {
     if (!r.ok) setMessage({ kind: 'error', text: r.error.message });
   };
 
+  const onOpenAdt = async (entry: SapTransportEntry): Promise<void> => {
+    if (!entry.systemId) return;
+    const url = buildAdtUrl(entry.systemId, entry.requestId);
+    try {
+      await router.open(url);
+    } catch (e) {
+      // router.open() rejects when the user cancels the external-link
+      // prompt or when the URL doesn't match permissions.external.fetch.client.
+      // The manifest whitelists adt:* so the latter shouldn't happen.
+      setMessage({
+        kind: 'error',
+        text: `Could not open ADT link: ${(e as Error).message}`,
+      });
+    }
+  };
+
   const onRelease = async (requestId: string): Promise<void> => {
     try {
-      const r = await invoke<ResolverResult<unknown>>('issue.release', { projectId, issueKey, requestId });
+      const r = await invoke<ResolverResult<unknown>>('issue.release', {
+        projectId,
+        issueKey,
+        requestId,
+      });
       if (r.ok) {
         setMessage({ kind: 'success', text: `Released ${requestId}` });
         await reload();
@@ -79,7 +106,11 @@ export const App: React.FC = () => {
 
   const onRefresh = async (requestId: string): Promise<void> => {
     try {
-      const r = await invoke<ResolverResult<unknown>>('issue.refresh', { projectId, issueKey, requestId });
+      const r = await invoke<ResolverResult<unknown>>('issue.refresh', {
+        projectId,
+        issueKey,
+        requestId,
+      });
       if (r.ok) {
         await reload();
       } else {
@@ -106,69 +137,63 @@ export const App: React.FC = () => {
       {
         key: 'request',
         content: entry.systemId ? (
-          // Open via plain `window.open` from a click handler. We can't use:
-          //   - <Link href="adt://...">: UI Kit 2's Link sanitises non-http
-          //     hrefs and strips the URL.
-          //   - router.open() from @forge/bridge: Atlassian's parent frame
-          //     also sanitises non-http schemes before navigating.
-          // The browser allows window.open(customScheme, '_blank') as long
-          // as the call comes from a user-initiated event (the click), so
-          // the OS protocol handler (Eclipse ADT) gets invoked normally.
           <Button
             appearance="subtle"
-            spacing="none"
+            spacing="compact"
             onClick={() => {
-              window.open(
-                `adt://${entry.systemId}/sap/bc/adt/cts/transportrequests/${entry.requestId}`,
-                '_blank',
-                'noopener,noreferrer',
-              );
+              void onOpenAdt(entry);
             }}
           >
             {entry.requestId}
           </Button>
         ) : (
-          <Text>{entry.requestId}</Text>
+          <span>{entry.requestId}</span>
         ),
       },
-      { key: 'type', content: <Text>{TYPE_LABELS[entry.type]}</Text> },
-      { key: 'description', content: <Text>{entry.description}</Text> },
-      { key: 'status', content: <Text>{entry.statusText}</Text> },
+      { key: 'type', content: <span>{TYPE_LABELS[entry.type]}</span> },
+      { key: 'description', content: <span>{entry.description}</span> },
+      { key: 'status', content: <span>{entry.statusText}</span> },
       {
         key: 'actions',
         content: (
-          <Inline space="space.100">
+          <div style={{ display: 'flex', gap: 8 }}>
             <Button onClick={() => void onRefresh(entry.requestId)}>Refresh</Button>
             {entry.status !== 'R' && (
               <Button appearance="primary" onClick={() => void onRelease(entry.requestId)}>
                 Release
               </Button>
             )}
-          </Inline>
+          </div>
         ),
       },
     ],
   }));
 
   return (
-    <Stack space="space.200">
-      <Heading as="h2">SAP Transport</Heading>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: 8 }}>
+      <Heading size="medium">SAP Transport</Heading>
       {message && (
         <SectionMessage appearance={message.kind === 'success' ? 'success' : 'error'}>
-          <Text>{message.text}</Text>
+          <p>{message.text}</p>
         </SectionMessage>
       )}
 
-      <DynamicTable head={head} rows={rows} emptyView={<Text>No transports linked to this issue.</Text>} />
+      <DynamicTable
+        head={head}
+        rows={rows}
+        emptyView={<span>No transports linked to this issue.</span>}
+      />
 
-      <Inline space="space.100">
-        <ButtonGroup>
-          <Button onClick={() => setCreateOpen('K')}>+ Workbench</Button>
-          <Button onClick={() => setCreateOpen('W')}>+ Customizing</Button>
-          <Button onClick={() => setCreateOpen('T')}>+ Copy</Button>
-        </ButtonGroup>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <Button onClick={() => setCreateOpen('K')}>+ Workbench</Button>
+        <Button onClick={() => setCreateOpen('W')}>+ Customizing</Button>
+        <Button onClick={() => setCreateOpen('T')}>+ Copy</Button>
         <Button onClick={() => setLinkOpen(true)}>Link existing</Button>
-      </Inline>
+      </div>
+
+      <small style={{ color: '#626f86' }}>
+        Opening a Request ID requires SAP ADT (Eclipse) installed locally.
+      </small>
 
       <ModalTransition>
         {createOpen && (
@@ -202,7 +227,7 @@ export const App: React.FC = () => {
           />
         )}
       </ModalTransition>
-    </Stack>
+    </div>
   );
 };
 
@@ -251,26 +276,24 @@ export const CreateDialog: React.FC<CreateDialogProps> = ({
         <ModalTitle>Create {TYPE_LABELS[type]} transport</ModalTitle>
       </ModalHeader>
       <ModalBody>
-        <Stack space="space.100">
-          <Text>Description override (optional, falls back to project template)</Text>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <label>Description override (optional, falls back to project template)</label>
           <Textfield
             value={override}
-            onChange={(e) => setOverride((e.target as { value?: string }).value ?? '')}
+            onChange={(e) => setOverride((e.target as HTMLInputElement).value)}
           />
-          <Text>Target system (optional, falls back to project default)</Text>
+          <label>Target system (optional, falls back to project default)</label>
           <Textfield
             value={target}
-            onChange={(e) => setTarget((e.target as { value?: string }).value ?? '')}
+            onChange={(e) => setTarget((e.target as HTMLInputElement).value)}
           />
-        </Stack>
+        </div>
       </ModalBody>
       <ModalFooter>
-        <Inline space="space.100">
-          <Button appearance="primary" onClick={() => void submit()}>
-            Create
-          </Button>
-          <Button onClick={onClose}>Cancel</Button>
-        </Inline>
+        <Button appearance="primary" onClick={() => void submit()}>
+          Create
+        </Button>
+        <Button onClick={onClose}>Cancel</Button>
       </ModalFooter>
     </Modal>
   );
@@ -316,25 +339,21 @@ export const LinkDialog: React.FC<LinkDialogProps> = ({
         <ModalTitle>Link existing transport</ModalTitle>
       </ModalHeader>
       <ModalBody>
-        <Stack space="space.100">
-          <Text>Transport request ID</Text>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <label>Transport request ID</label>
           <Textfield
             value={requestId}
             placeholder="DEVK900123"
-            onChange={(e) => setRequestId((e.target as { value?: string }).value ?? '')}
+            onChange={(e) => setRequestId((e.target as HTMLInputElement).value)}
           />
-        </Stack>
+        </div>
       </ModalBody>
       <ModalFooter>
-        <Inline space="space.100">
-          <Button appearance="primary" onClick={() => void submit()}>
-            Link
-          </Button>
-          <Button onClick={onClose}>Cancel</Button>
-        </Inline>
+        <Button appearance="primary" onClick={() => void submit()}>
+          Link
+        </Button>
+        <Button onClick={onClose}>Cancel</Button>
       </ModalFooter>
     </Modal>
   );
 };
-
-ForgeReconciler.render(<App />);
