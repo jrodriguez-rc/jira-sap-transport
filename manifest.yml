@@ -209,3 +209,16 @@ permissions:
       backend:
         - address: https://*.newmethodologies.net
         - address: https://*.resultoconsultoria.com
+      # Wildcard client egress is the only way Forge appends `allow-popups`
+      # and `allow-popups-to-escape-sandbox` to the iframe sandbox attribute
+      # — see https://developer.atlassian.com/platform/forge/manifest-reference/permissions/#allow-for-popups-from-frames
+      # Without these directives, every navigation route Forge supports for
+      # the Custom UI iframe (router.open, router.navigate, plain anchors,
+      # window.open) ends up calling window.open() inside the sandbox and
+      # is blocked. The cost is losing "Runs on Atlassian" Marketplace
+      # eligibility, which is irrelevant here — the app is private to
+      # resultoconsultoria.com / newmethodologies.net. Backend egress
+      # stays strictly limited under `backend:` above; the client never
+      # actually fetches anything (all I/O goes through invoke → resolver).
+      client:
+        - address: '*'

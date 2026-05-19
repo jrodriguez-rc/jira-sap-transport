@@ -4,10 +4,14 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+const { invokeMock, routerOpenMock } = vi.hoisted(() => ({
+  invokeMock: vi.fn(),
+  routerOpenMock: vi.fn(),
+}));
 
 vi.mock('@forge/bridge', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
+  router: { open: (...args: unknown[]) => routerOpenMock(...args) },
   view: {
     getContext: vi.fn(async () => ({
       extension: { project: { id: '10001' }, issue: { key: 'PROJ-1' } },
@@ -51,6 +55,8 @@ const entries: SapTransportEntry[] = [
 
 beforeEach(() => {
   invokeMock.mockReset();
+  routerOpenMock.mockReset();
+  routerOpenMock.mockResolvedValue(undefined);
 });
 
 describe('issue-panel App (Custom UI)', () => {
@@ -67,25 +73,39 @@ describe('issue-panel App (Custom UI)', () => {
     expect(screen.getByText('Released')).toBeInTheDocument();
   });
 
-  it('renders the request id as a plain anchor with the adt:// href', async () => {
+  it('opens Eclipse ADT via router.open when the request button is clicked', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'issue.list') return ok(entries);
       return ok(undefined);
     });
+    const user = userEvent.setup();
     render(<App />);
-    // Atlaskit's Button with the `href` prop renders as a real <a> — no
-    // @forge/bridge router involved. Browser click navigates the iframe
-    // itself (no popup, so the sandbox doesn't block it); for the adt://
-    // scheme the OS protocol handler takes over and the iframe content
-    // stays put.
-    const link = await screen.findByRole('link', { name: 'DEVK900100' });
-    expect(link).toHaveAttribute(
-      'href',
+    // router.open() is the documented path for external URLs from Custom
+    // UI — surfaces Atlassian's "open external link" prompt, then hands
+    // the URL off to the OS. Requires `allow-popups` in the iframe
+    // sandbox, which Forge appends when the manifest declares
+    // `permissions.external.fetch.client: - address: '*'`.
+    const requestButton = await screen.findByRole('button', { name: 'DEVK900100' });
+    await user.click(requestButton);
+    expect(routerOpenMock).toHaveBeenCalledWith(
       'adt://A4H/sap/bc/adt/cts/transportrequests/DEVK900100',
     );
   });
 
-  it('renders the request id as plain text (no link) for legacy entries without systemId', async () => {
+  it('shows an error banner when router.open rejects (user declines the prompt)', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'issue.list') return ok(entries);
+      return ok(undefined);
+    });
+    routerOpenMock.mockRejectedValueOnce(new Error('user cancelled'));
+    const user = userEvent.setup();
+    render(<App />);
+    const requestButton = await screen.findByRole('button', { name: 'DEVK900100' });
+    await user.click(requestButton);
+    await screen.findByText(/Could not open ADT link: user cancelled/);
+  });
+
+  it('renders the request id as plain text (no button) for legacy entries without systemId', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'issue.list') return ok(entries);
       return ok(undefined);
@@ -93,7 +113,6 @@ describe('issue-panel App (Custom UI)', () => {
     render(<App />);
     await screen.findByText('DEVK900099');
     expect(screen.queryByRole('button', { name: 'DEVK900099' })).toBeNull();
-    expect(screen.queryByRole('link', { name: 'DEVK900099' })).toBeNull();
   });
 
   it('shows an error banner when issue.list fails', async () => {

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import Button, { LinkButton } from '@atlaskit/button/new';
+import Button from '@atlaskit/button/new';
 import DynamicTable from '@atlaskit/dynamic-table';
 import Heading from '@atlaskit/heading';
 import Modal, {
@@ -11,18 +11,16 @@ import Modal, {
 } from '@atlaskit/modal-dialog';
 import SectionMessage from '@atlaskit/section-message';
 import Textfield from '@atlaskit/textfield';
-import { invoke, view } from '@forge/bridge';
-// The ADT link is rendered as a plain anchor (Atlaskit Button with `href`)
-// rather than going through @forge/bridge's router. Both router.open() and
-// router.navigate() eventually call window.open() inside the Forge iframe,
-// which the browser blocks because the iframe's sandbox lacks `allow-popups`
-// (only `permissions.external.fetch.client: - address: '*'` would add that,
-// and using the full wildcard disqualifies the app from "Runs on Atlassian"
-// eligibility). A plain `<a href="adt://...">` without `target="_blank"`
-// navigates the iframe itself instead of opening a popup, so the sandbox
-// doesn't block it; for a custom scheme the browser hands the URL off to
-// the OS protocol handler (Eclipse ADT) and leaves the iframe content
-// unchanged, preserving the Jira issue view.
+import { invoke, router, view } from '@forge/bridge';
+// router.open() is the documented way to open external URLs from a Custom
+// UI iframe — https://developer.atlassian.com/platform/forge/custom-ui-bridge/router/
+// It opens a new window and surfaces Atlassian's "open external link"
+// prompt to the user. Every navigation path in the Custom UI iframe
+// (router.open, router.navigate, plain <a>, window.open) ultimately calls
+// window.open() under the hood, so all of them require the sandbox to
+// carry `allow-popups`. Forge only appends that directive when the
+// manifest declares `permissions.external.fetch.client: - address: '*'`
+// — see the manifest comment.
 import type { SapTransportEntry, TransportType } from './types';
 
 interface IssueContext {
@@ -81,6 +79,21 @@ export const App: React.FC = () => {
     if (!r.ok) setMessage({ kind: 'error', text: r.error.message });
   };
 
+  const onOpenAdt = async (entry: SapTransportEntry): Promise<void> => {
+    if (!entry.systemId) return;
+    const url = buildAdtUrl(entry.systemId, entry.requestId);
+    try {
+      await router.open(url);
+    } catch (e) {
+      // router.open() rejects when the user declines Atlassian's
+      // external-link prompt.
+      setMessage({
+        kind: 'error',
+        text: `Could not open ADT link: ${(e as Error).message}`,
+      });
+    }
+  };
+
   const onRelease = async (requestId: string): Promise<void> => {
     try {
       const r = await invoke<ResolverResult<unknown>>('issue.release', {
@@ -132,13 +145,15 @@ export const App: React.FC = () => {
       {
         key: 'request',
         content: entry.systemId ? (
-          <LinkButton
+          <Button
             appearance="subtle"
             spacing="compact"
-            href={buildAdtUrl(entry.systemId, entry.requestId)}
+            onClick={() => {
+              void onOpenAdt(entry);
+            }}
           >
             {entry.requestId}
-          </LinkButton>
+          </Button>
         ) : (
           <span>{entry.requestId}</span>
         ),
