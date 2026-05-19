@@ -1,5 +1,5 @@
 // src/handlers/connections.ts
-import { listConnections, saveConnection, deleteConnection, toPublic } from '../lib/storage';
+import { listConnections, saveConnection, getConnection, deleteConnection, toPublic } from '../lib/storage';
 import { createSapClient } from '../lib/sap-client';
 import type { Connection } from '../lib/types';
 
@@ -24,6 +24,16 @@ export async function listConnectionsResolver(_args: ResolverArgs) {
 
 export async function saveConnectionResolver(args: ResolverArgs<Partial<Connection>>) {
   const providedId = args.payload.id;
+  // When editing an existing connection without supplying a new password,
+  // reuse the stored one so admins can rename / tweak fields without
+  // re-typing the secret. If the id is unknown we fall through and the
+  // standard "password required" validation kicks in below.
+  if (providedId && (!args.payload.password || args.payload.password.length === 0)) {
+    const existing = await getConnection(providedId);
+    if (existing) {
+      args.payload = { ...args.payload, password: existing.password };
+    }
+  }
   validateConnection(args.payload);
   const id = providedId ?? `conn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const conn: Connection = {

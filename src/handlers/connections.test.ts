@@ -91,6 +91,24 @@ describe('saveConnectionResolver', () => {
       context: {}
     })).rejects.toThrow(/label, username and password are required/);
   });
+
+  it('reuses stored password when editing an existing connection without a new password', async () => {
+    store.set('connections:fixed', { id: 'fixed', label: 'old', hostname: 'https://x.newmethodologies.net', client: '100', username: 'u', password: 'stored-secret' });
+    await saveConnectionResolver({
+      payload: { id: 'fixed', label: 'new-label', hostname: 'https://x.newmethodologies.net', client: '100', username: 'u' /* no password */ },
+      context: {}
+    });
+    const updated = store.get('connections:fixed') as { label: string; password: string };
+    expect(updated.label).toBe('new-label');
+    expect(updated.password).toBe('stored-secret');
+  });
+
+  it('still rejects new connections without a password', async () => {
+    await expect(saveConnectionResolver({
+      payload: { label: 'A', hostname: 'https://x.newmethodologies.net', client: '100', username: 'u' /* no password, no id */ },
+      context: {}
+    })).rejects.toThrow(/password/i);
+  });
 });
 
 describe('deleteConnectionResolver', () => {
