@@ -13,10 +13,14 @@ import ForgeReconciler, {
   SectionMessage,
   Stack,
   Text,
+  TextArea,
   Textfield,
   useForm,
 } from '@forge/react';
 import { invoke } from '@forge/bridge';
+import { SmartValuesPicker } from './components/SmartValuesPicker';
+
+const DEFAULT_DESCRIPTION_TEMPLATE = '{{issue.key}} {{issue.fields.summary}}';
 
 interface ConnPublic {
   id: string;
@@ -24,6 +28,7 @@ interface ConnPublic {
   hostname: string;
   client: string;
   username: string;
+  descriptionTemplate?: string;
 }
 
 type EditingConn = Partial<ConnPublic & { password?: string }>;
@@ -97,6 +102,24 @@ export const App: React.FC = () => {
     }
   };
 
+  // Test a stored connection by id — server-side loads the password,
+  // so the secret never round-trips through the frontend.
+  const onTestById = async (id: string): Promise<void> => {
+    try {
+      const res = await invoke<{ ok: boolean; error?: { message: string } }>(
+        'connections.test',
+        { id },
+      );
+      setMessage(
+        res.ok
+          ? { kind: 'success', text: 'Connection OK' }
+          : { kind: 'error', text: res.error?.message ?? 'Failed' },
+      );
+    } catch (e) {
+      setMessage({ kind: 'error', text: (e as Error).message });
+    }
+  };
+
   const head = {
     cells: [
       { key: 'label', content: 'Label' },
@@ -119,6 +142,7 @@ export const App: React.FC = () => {
         content: (
           <Inline space="space.100">
             <Button onClick={() => setEditing(c)}>Edit</Button>
+            <Button onClick={() => void onTestById(c.id)}>Test</Button>
             <Button appearance="danger" onClick={() => void onDelete(c.id)}>
               Delete
             </Button>
@@ -163,9 +187,34 @@ interface ConnectionFormProps {
 }
 
 export const ConnectionForm: React.FC<ConnectionFormProps> = ({ initial, onSubmit, onTest, onCancel }) => {
+  // Use defaultValues to seed the form. For new connections we prefill the
+  // Description template with the engine default so admins can edit-from-default
+  // rather than start with an empty field.
+  const seededTemplate =
+    (initial as { descriptionTemplate?: string }).descriptionTemplate ??
+    (initial.id ? '' : DEFAULT_DESCRIPTION_TEMPLATE);
+  const seeded: Record<string, string> = {
+    ...(initial as Record<string, string>),
+    descriptionTemplate: seededTemplate,
+  };
   const { handleSubmit, register, getValues } = useForm<Record<string, string>>({
-    defaultValues: initial as Record<string, string>,
+    defaultValues: seeded,
   });
+
+  // Description template is held in component state so the SmartValuesPicker
+  // can append tokens. @forge/react's TextArea does not expose a DOM ref, so
+  // we can't insert at the caret — tokens are appended at the end and the
+  // admin can re-order manually.
+  const [template, setTemplate] = useState<string>(seededTemplate);
+  const templateRegister = register('descriptionTemplate');
+
+  const onPickToken = (tok: string): void => {
+    const next = template.length > 0 && !template.endsWith(' ') ? template + ' ' + tok : template + tok;
+    setTemplate(next);
+    // Sync into react-hook-form so submission picks the new value.
+    // useForm's onChange dispatches on event.target.type — 'textarea' routes via setValue.
+    templateRegister.onChange?.({ target: { type: 'textarea', value: next } } as never);
+  };
 
   return (
     <Box padding="space.200">
@@ -185,6 +234,19 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ initial, onSubmi
           <Textfield {...register('username', { required: true })} />
           <Label labelFor="password">Password</Label>
           <Textfield type="password" {...register('password', { required: !initial.id })} />
+          <Label labelFor="descriptionTemplate">Description template</Label>
+          <Inline space="space.050">
+            <SmartValuesPicker onInsert={onPickToken} />
+          </Inline>
+          <TextArea
+            {...templateRegister}
+            value={template}
+            onChange={(e) => {
+              const v = (e.target as { value?: string }).value ?? '';
+              setTemplate(v);
+              templateRegister.onChange?.(e);
+            }}
+          />
         </FormSection>
         <FormFooter>
           <Inline space="space.100">

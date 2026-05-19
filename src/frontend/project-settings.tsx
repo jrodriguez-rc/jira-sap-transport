@@ -14,6 +14,7 @@ import ForgeReconciler, {
   Textfield,
 } from '@forge/react';
 import { invoke, view } from '@forge/bridge';
+import { SmartValuesPicker } from './components/SmartValuesPicker';
 import type { ProjectConfig, RenderResult, TransportType } from '../lib/types';
 
 interface ConnPublic {
@@ -260,6 +261,16 @@ export const App: React.FC = () => {
       />
 
       <Label labelFor="description-template">Description template</Label>
+      <Inline space="space.050">
+        <SmartValuesPicker
+          onInsert={(tok) => {
+            const cur = cfg.descriptionTemplate ?? '';
+            const next = cur.length > 0 && !cur.endsWith(' ') ? cur + ' ' + tok : cur + tok;
+            setCfg({ ...cfg, descriptionTemplate: next });
+            void onPreview(next);
+          }}
+        />
+      </Inline>
       <TextArea
         value={cfg.descriptionTemplate}
         onChange={(e) => {

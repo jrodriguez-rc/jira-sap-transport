@@ -495,6 +495,49 @@ describe('project-settings App', () => {
     await screen.findByText('boom');
   });
 
+  it('renders the SmartValuesPicker trigger next to the Description template field', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([]);
+      if (key === 'project.getConfig') {
+        return ok({
+          projectCode: 'PROJ',
+          descriptionTemplate: '',
+          defaults: { type: 'K' as const },
+        });
+      }
+      return ok(undefined);
+    });
+    render(<App />);
+    await screen.findByDisplayValue('PROJ');
+    expect(screen.getByLabelText('Insert variable')).toBeInTheDocument();
+  });
+
+  it('inserting a token from the picker appends it to the Description template', async () => {
+    invokeMock.mockImplementation(async (key: string, payload?: unknown) => {
+      if (key === 'connections.list') return ok([]);
+      if (key === 'project.getConfig') {
+        return ok({
+          projectCode: 'PROJ',
+          descriptionTemplate: 'PRE',
+          defaults: { type: 'K' as const },
+        });
+      }
+      if (key === 'project.previewTemplate') {
+        const tpl = (payload as { template: string }).template;
+        return ok({ text: tpl, length: tpl.length, warnings: [], truncated: false });
+      }
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByDisplayValue('PROJ');
+    const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+    expect(textarea.value).toBe('PRE');
+    await user.click(screen.getByLabelText('Insert variable'));
+    await user.click(screen.getByText('{{project.key}}'));
+    await waitFor(() => expect(textarea.value).toBe('PRE {{project.key}}'));
+  });
+
   it('updating the project code reflects in the input', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'connections.list') return ok([]);

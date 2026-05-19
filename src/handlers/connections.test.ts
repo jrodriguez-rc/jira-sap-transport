@@ -91,6 +91,33 @@ describe('saveConnectionResolver', () => {
       context: {}
     })).rejects.toThrow(/label, username and password are required/);
   });
+
+  it('reuses stored password when editing an existing connection without a new password', async () => {
+    store.set('connections:fixed', { id: 'fixed', label: 'old', hostname: 'https://x.newmethodologies.net', client: '100', username: 'u', password: 'stored-secret' });
+    await saveConnectionResolver({
+      payload: { id: 'fixed', label: 'new-label', hostname: 'https://x.newmethodologies.net', client: '100', username: 'u' /* no password */ },
+      context: {}
+    });
+    const updated = store.get('connections:fixed') as { label: string; password: string };
+    expect(updated.label).toBe('new-label');
+    expect(updated.password).toBe('stored-secret');
+  });
+
+  it('still rejects new connections without a password', async () => {
+    await expect(saveConnectionResolver({
+      payload: { label: 'A', hostname: 'https://x.newmethodologies.net', client: '100', username: 'u' /* no password, no id */ },
+      context: {}
+    })).rejects.toThrow(/password/i);
+  });
+
+  it('persists the descriptionTemplate when supplied', async () => {
+    const res = await saveConnectionResolver({
+      payload: { label: 'A', hostname: 'https://x.newmethodologies.net', client: '100', username: 'u', password: 'p', descriptionTemplate: 'TPL: {{issue.key}}' },
+      context: {}
+    });
+    const stored = store.get('connections:' + res.id) as { descriptionTemplate?: string };
+    expect(stored.descriptionTemplate).toBe('TPL: {{issue.key}}');
+  });
 });
 
 describe('deleteConnectionResolver', () => {
@@ -125,6 +152,46 @@ describe('testConnectionResolver', () => {
     expect(res.ok).toBe(false);
     if (!res.ok) {
       expect(res.error.code).toBe('INVALID_HOSTNAME');
+    }
+  });
+
+  it('tests a stored connection by id (loads password server-side)', async () => {
+    store.set('connections:stored-id', { id: 'stored-id', label: 'A', hostname: 'https://dev.sap.example', client: '100', username: 'u', password: 'real-secret' });
+    const capture = vi.fn().mockReturnValue({
+      testConnection: async () => ({ ok: true }),
+      createTransport: vi.fn(),
+      releaseTransport: vi.fn(),
+      getTransport: vi.fn()
+    } as never);
+    vi.spyOn(sapClientMod, 'createSapClient').mockImplementation(capture);
+
+    const res = await testConnectionResolver({ payload: { id: 'stored-id' }, context: {} });
+
+    expect(res).toEqual({ ok: true });
+    expect(capture).toHaveBeenCalledWith(expect.objectContaining({
+      hostname: 'https://dev.sap.example',
+      client: '100',
+      username: 'u',
+      password: 'real-secret'
+    }));
+  });
+
+  it('returns a structured error when id refers to a missing connection', async () => {
+    const res = await testConnectionResolver({ payload: { id: 'missing' }, context: {} });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error.code).toBe('NOT_FOUND');
+    }
+  });
+
+  it('returns a structured error when ad-hoc test is missing fields', async () => {
+    const res = await testConnectionResolver({
+      payload: { hostname: 'https://dev.sap.example' },
+      context: {}
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error.code).toBe('INVALID_PAYLOAD');
     }
   });
 });

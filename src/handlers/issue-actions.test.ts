@@ -136,6 +136,27 @@ describe('createTransportResolver', () => {
     });
     expect(r.requestId).toBe('DEVK900123');
   });
+
+  it('cascade: project template overrides connection template', async () => {
+    appStore.set('connections:c1', { ...conn, descriptionTemplate: 'CONN: {{issue.key}}' });
+    appStore.set('project:10001:config', { connectionId: 'c1', projectCode: 'PRJX', descriptionTemplate: 'PRJ: {{issue.key}}', defaults: { type: 'K', target: 'QAS' } });
+    const r = await createTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      context: { accountId: 'acc1' }
+    });
+    expect(r.description).toBe('PRJ: PROJ-1');
+  });
+
+  it('cascade: connection template is used when project template is empty', async () => {
+    appStore.set('connections:c1', { ...conn, descriptionTemplate: 'CONN: {{issue.key}}' });
+    // project descriptionTemplate is '' (the existing default in beforeEach),
+    // so the cascade must fall through to the connection template.
+    const r = await createTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      context: { accountId: 'acc1' }
+    });
+    expect(r.description).toBe('CONN: PROJ-1');
+  });
 });
 
 describe('linkTransportResolver', () => {

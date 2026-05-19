@@ -1,5 +1,5 @@
 // src/handlers/connections.ts
-import { listConnections, saveConnection, deleteConnection, toPublic } from '../lib/storage';
+import { listConnections, saveConnection, getConnection, deleteConnection, toPublic } from '../lib/storage';
 import { createSapClient } from '../lib/sap-client';
 import type { Connection } from '../lib/types';
 
@@ -24,6 +24,16 @@ export async function listConnectionsResolver(_args: ResolverArgs) {
 
 export async function saveConnectionResolver(args: ResolverArgs<Partial<Connection>>) {
   const providedId = args.payload.id;
+  // When editing an existing connection without supplying a new password,
+  // reuse the stored one so admins can rename / tweak fields without
+  // re-typing the secret. If the id is unknown we fall through and the
+  // standard "password required" validation kicks in below.
+  if (providedId && (!args.payload.password || args.payload.password.length === 0)) {
+    const existing = await getConnection(providedId);
+    if (existing) {
+      args.payload = { ...args.payload, password: existing.password };
+    }
+  }
   validateConnection(args.payload);
   const id = providedId ?? `conn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const conn: Connection = {
@@ -32,7 +42,8 @@ export async function saveConnectionResolver(args: ResolverArgs<Partial<Connecti
     hostname: args.payload.hostname,
     client: args.payload.client,
     username: args.payload.username,
-    password: args.payload.password
+    password: args.payload.password,
+    ...(args.payload.descriptionTemplate !== undefined ? { descriptionTemplate: args.payload.descriptionTemplate } : {})
   };
   await saveConnection(conn);
   return { id };
@@ -43,10 +54,23 @@ export async function deleteConnectionResolver(args: ResolverArgs<{ id: string }
   return { ok: true };
 }
 
-export async function testConnectionResolver(args: ResolverArgs<{ hostname: string; client: string; username: string; password: string }>) {
-  if (!args.payload.hostname || !/^https:\/\/.+/.test(args.payload.hostname)) {
-    return { ok: false as const, error: { code: 'INVALID_HOSTNAME', message: 'hostname must be an https URL', severity: 'error' as const } };
+export async function testConnectionResolver(args: ResolverArgs<{ id?: string; hostname?: string; client?: string; username?: string; password?: string }>) {
+  let conn: { hostname: string; client: string; username: string; password: string };
+  if (args.payload.id) {
+    const stored = await getConnection(args.payload.id);
+    if (!stored) {
+      return { ok: false as const, error: { code: 'NOT_FOUND', message: 'Connection not found', severity: 'error' as const } };
+    }
+    conn = { hostname: stored.hostname, client: stored.client, username: stored.username, password: stored.password };
+  } else {
+    if (!args.payload.hostname || !/^https:\/\/.+/.test(args.payload.hostname)) {
+      return { ok: false as const, error: { code: 'INVALID_HOSTNAME', message: 'hostname must be an https URL', severity: 'error' as const } };
+    }
+    if (!args.payload.client || !args.payload.username || !args.payload.password) {
+      return { ok: false as const, error: { code: 'INVALID_PAYLOAD', message: 'hostname, client, username and password are required for ad-hoc test', severity: 'error' as const } };
+    }
+    conn = { hostname: args.payload.hostname, client: args.payload.client, username: args.payload.username, password: args.payload.password };
   }
-  const client = createSapClient(args.payload);
+  const client = createSapClient(conn);
   return client.testConnection();
 }
