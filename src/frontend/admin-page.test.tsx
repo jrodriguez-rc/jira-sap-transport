@@ -356,4 +356,19 @@ describe('admin-page App', () => {
     await user.click(editBtn);
     expect(await screen.findByTitle('Edit connection')).toBeInTheDocument();
   });
+
+  it('prefills the Description template with the engine default when adding a new connection', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([]);
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('connections.list'));
+    await user.click(screen.getByText('+ Add connection'));
+    await screen.findByTitle('New connection');
+    const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+    expect(textarea).not.toBeNull();
+    expect(textarea.value).toBe('{{issue.key}} {{issue.fields.summary}}');
+  });
 });

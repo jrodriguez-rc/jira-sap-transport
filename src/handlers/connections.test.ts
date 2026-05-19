@@ -109,6 +109,15 @@ describe('saveConnectionResolver', () => {
       context: {}
     })).rejects.toThrow(/password/i);
   });
+
+  it('persists the descriptionTemplate when supplied', async () => {
+    const res = await saveConnectionResolver({
+      payload: { label: 'A', hostname: 'https://x.newmethodologies.net', client: '100', username: 'u', password: 'p', descriptionTemplate: 'TPL: {{issue.key}}' },
+      context: {}
+    });
+    const stored = store.get('connections:' + res.id) as { descriptionTemplate?: string };
+    expect(stored.descriptionTemplate).toBe('TPL: {{issue.key}}');
+  });
 });
 
 describe('deleteConnectionResolver', () => {

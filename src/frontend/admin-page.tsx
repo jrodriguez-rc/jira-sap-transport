@@ -13,10 +13,13 @@ import ForgeReconciler, {
   SectionMessage,
   Stack,
   Text,
+  TextArea,
   Textfield,
   useForm,
 } from '@forge/react';
 import { invoke } from '@forge/bridge';
+
+const DEFAULT_DESCRIPTION_TEMPLATE = '{{issue.key}} {{issue.fields.summary}}';
 
 interface ConnPublic {
   id: string;
@@ -24,6 +27,7 @@ interface ConnPublic {
   hostname: string;
   client: string;
   username: string;
+  descriptionTemplate?: string;
 }
 
 type EditingConn = Partial<ConnPublic & { password?: string }>;
@@ -182,8 +186,17 @@ interface ConnectionFormProps {
 }
 
 export const ConnectionForm: React.FC<ConnectionFormProps> = ({ initial, onSubmit, onTest, onCancel }) => {
+  // Use defaultValues to seed the form. For new connections we prefill the
+  // Description template with the engine default so admins can edit-from-default
+  // rather than start with an empty field.
+  const seeded: Record<string, string> = {
+    ...(initial as Record<string, string>),
+    descriptionTemplate:
+      (initial as { descriptionTemplate?: string }).descriptionTemplate ??
+      (initial.id ? '' : DEFAULT_DESCRIPTION_TEMPLATE),
+  };
   const { handleSubmit, register, getValues } = useForm<Record<string, string>>({
-    defaultValues: initial as Record<string, string>,
+    defaultValues: seeded,
   });
 
   return (
@@ -204,6 +217,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ initial, onSubmi
           <Textfield {...register('username', { required: true })} />
           <Label labelFor="password">Password</Label>
           <Textfield type="password" {...register('password', { required: !initial.id })} />
+          <Label labelFor="descriptionTemplate">Description template</Label>
+          <TextArea {...register('descriptionTemplate')} />
         </FormSection>
         <FormFooter>
           <Inline space="space.100">

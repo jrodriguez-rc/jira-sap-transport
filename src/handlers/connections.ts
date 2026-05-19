@@ -42,7 +42,8 @@ export async function saveConnectionResolver(args: ResolverArgs<Partial<Connecti
     hostname: args.payload.hostname,
     client: args.payload.client,
     username: args.payload.username,
-    password: args.payload.password
+    password: args.payload.password,
+    ...(args.payload.descriptionTemplate !== undefined ? { descriptionTemplate: args.payload.descriptionTemplate } : {})
   };
   await saveConnection(conn);
   return { id };

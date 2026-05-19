@@ -65,9 +65,14 @@ export async function createTransportResolver(args: ResolverArgs<{
     const issue = await fetchIssue(args.payload.issueKey);
 
     const renderCtx = { issue, project: { code: cfg.projectCode }, user: { email }, date: { iso: new Date().toISOString().slice(0, 10) } };
-    const rendered = args.payload.descriptionOverride && args.payload.descriptionOverride.trim().length > 0
-      ? render(args.payload.descriptionOverride, renderCtx)
-      : render(cfg.descriptionTemplate, renderCtx);
+    // Cascade: per-call override > project template > connection template > engine default.
+    // render() treats empty strings as "use DEFAULT_TEMPLATE", so passing '' is the right
+    // way to delegate to the engine when nothing else is configured.
+    const templateOverride = args.payload.descriptionOverride?.trim();
+    const projectTemplate = cfg.descriptionTemplate?.trim();
+    const connectionTemplate = conn.descriptionTemplate?.trim();
+    const effective = templateOverride || projectTemplate || connectionTemplate || '';
+    const rendered = render(effective, renderCtx);
 
     const client = createSapClient(conn);
     const rt = await client.createTransport({

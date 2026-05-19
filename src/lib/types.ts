@@ -9,6 +9,9 @@ export interface Connection {
   client: string;         // SAP mandant, 3 chars
   username: string;
   password: string;       // never returned to frontend
+  // Optional default Description template at the Connection level. The cascade
+  // at render time is: project override > project config > connection > engine default.
+  descriptionTemplate?: string;
 }
 
 export type ConnectionPublic = Omit<Connection, 'password'>;
