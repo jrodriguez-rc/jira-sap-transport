@@ -19,6 +19,7 @@ import ForgeReconciler, {
 } from '@forge/react';
 import { invoke } from '@forge/bridge';
 import { SmartValuesPicker } from './components/SmartValuesPicker';
+import type { RenderResult } from '../lib/types';
 
 const DEFAULT_DESCRIPTION_TEMPLATE = '{{issue.key}} {{issue.fields.summary}}';
 
@@ -213,6 +214,31 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ initial, onSubmi
   // tokens are appended at the end of the current value rather than at the
   // caret position.
   const [template, setTemplate] = useState<string>(seededTemplate);
+  const [preview, setPreview] = useState<RenderResult | null>(null);
+
+  // Refresh the preview whenever the template changes (including on mount,
+  // so the admin sees what the seeded default renders to without typing).
+  useEffect(() => {
+    let cancelled = false;
+    if (template.length === 0) {
+      setPreview(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+    void (async () => {
+      const r = await invoke<ResolverResult<RenderResult>>('project.previewTemplate', {
+        template,
+        sampleContext: {
+          issue: { key: 'PRJ-1', fields: { summary: 'Sample summary' } },
+        },
+      });
+      if (!cancelled && r.ok) setPreview(r.data);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [template]);
 
   const onPickToken = (tok: string): void => {
     setTemplate((prev) =>
@@ -253,6 +279,17 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ initial, onSubmi
             value={template}
             onChange={(e) => setTemplate((e.target as { value?: string }).value ?? '')}
           />
+          {preview && (
+            <Box padding="space.100">
+              <Text>
+                Preview: "{preview.text}" ({preview.length}/60
+                {preview.truncated ? ' — truncated' : ''})
+              </Text>
+              {preview.warnings.map((w) => (
+                <Text key={w}>⚠ {w}</Text>
+              ))}
+            </Box>
+          )}
         </FormSection>
         <FormFooter>
           <Inline space="space.100">

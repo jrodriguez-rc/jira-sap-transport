@@ -75,12 +75,27 @@ export const App: React.FC = () => {
     })();
   }, []);
 
+  // Refresh the preview whenever the cfg's template changes (including after
+  // the initial load) so the admin immediately sees what the saved/seeded
+  // template will render to, without having to type in the textarea first.
+  useEffect(() => {
+    if (cfg?.descriptionTemplate && cfg.descriptionTemplate.length > 0) {
+      void onPreview(cfg.descriptionTemplate);
+    } else {
+      setPreview(null);
+    }
+    // We intentionally depend only on the template string; onPreview reads
+    // cfg.projectCode from the latest closure but that is stable enough for
+    // the preview's sample-issue-key purpose.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cfg?.descriptionTemplate]);
+
   const onPreview = async (template: string): Promise<void> => {
     const r = await invoke<ResolverResult<RenderResult>>('project.previewTemplate', {
       template,
       sampleContext: {
         issue: {
-          key: `${cfg?.projectCode ?? 'PRJ'}-1`,
+          key: `${cfg?.projectCode || 'PRJ'}-1`,
           fields: { summary: 'Sample summary' },
         },
       },
