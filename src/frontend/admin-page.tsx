@@ -18,6 +18,7 @@ import ForgeReconciler, {
   useForm,
 } from '@forge/react';
 import { invoke } from '@forge/bridge';
+import { SmartValuesPicker } from './components/SmartValuesPicker';
 
 const DEFAULT_DESCRIPTION_TEMPLATE = '{{issue.key}} {{issue.fields.summary}}';
 
@@ -189,15 +190,31 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ initial, onSubmi
   // Use defaultValues to seed the form. For new connections we prefill the
   // Description template with the engine default so admins can edit-from-default
   // rather than start with an empty field.
+  const seededTemplate =
+    (initial as { descriptionTemplate?: string }).descriptionTemplate ??
+    (initial.id ? '' : DEFAULT_DESCRIPTION_TEMPLATE);
   const seeded: Record<string, string> = {
     ...(initial as Record<string, string>),
-    descriptionTemplate:
-      (initial as { descriptionTemplate?: string }).descriptionTemplate ??
-      (initial.id ? '' : DEFAULT_DESCRIPTION_TEMPLATE),
+    descriptionTemplate: seededTemplate,
   };
   const { handleSubmit, register, getValues } = useForm<Record<string, string>>({
     defaultValues: seeded,
   });
+
+  // Description template is held in component state so the SmartValuesPicker
+  // can append tokens. @forge/react's TextArea does not expose a DOM ref, so
+  // we can't insert at the caret — tokens are appended at the end and the
+  // admin can re-order manually.
+  const [template, setTemplate] = useState<string>(seededTemplate);
+  const templateRegister = register('descriptionTemplate');
+
+  const onPickToken = (tok: string): void => {
+    const next = template.length > 0 && !template.endsWith(' ') ? template + ' ' + tok : template + tok;
+    setTemplate(next);
+    // Sync into react-hook-form so submission picks the new value.
+    // useForm's onChange dispatches on event.target.type — 'textarea' routes via setValue.
+    templateRegister.onChange?.({ target: { type: 'textarea', value: next } } as never);
+  };
 
   return (
     <Box padding="space.200">
@@ -218,7 +235,18 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ initial, onSubmi
           <Label labelFor="password">Password</Label>
           <Textfield type="password" {...register('password', { required: !initial.id })} />
           <Label labelFor="descriptionTemplate">Description template</Label>
-          <TextArea {...register('descriptionTemplate')} />
+          <Inline space="space.050">
+            <SmartValuesPicker onInsert={onPickToken} />
+          </Inline>
+          <TextArea
+            {...templateRegister}
+            value={template}
+            onChange={(e) => {
+              const v = (e.target as { value?: string }).value ?? '';
+              setTemplate(v);
+              templateRegister.onChange?.(e);
+            }}
+          />
         </FormSection>
         <FormFooter>
           <Inline space="space.100">

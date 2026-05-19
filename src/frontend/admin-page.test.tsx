@@ -371,4 +371,35 @@ describe('admin-page App', () => {
     expect(textarea).not.toBeNull();
     expect(textarea.value).toBe('{{issue.key}} {{issue.fields.summary}}');
   });
+
+  it('renders the SmartValuesPicker trigger next to the Description template field', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([]);
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('connections.list'));
+    await user.click(screen.getByText('+ Add connection'));
+    await screen.findByTitle('New connection');
+    expect(screen.getByLabelText('Insert variable')).toBeInTheDocument();
+  });
+
+  it('inserting a token from the picker appends it to the Description template', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([]);
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('connections.list'));
+    await user.click(screen.getByText('+ Add connection'));
+    await screen.findByTitle('New connection');
+    const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+    expect(textarea.value).toBe('{{issue.key}} {{issue.fields.summary}}');
+    await user.click(screen.getByLabelText('Insert variable'));
+    await user.click(screen.getByText('{{user.email}}'));
+    // The new token is appended at the end with a separating space.
+    expect(textarea.value).toBe('{{issue.key}} {{issue.fields.summary}} {{user.email}}');
+  });
 });
