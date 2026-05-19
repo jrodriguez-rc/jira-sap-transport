@@ -121,6 +121,19 @@ describe('project-settings App', () => {
     await screen.findByText('SAP Transport — Project Settings');
   });
 
+  it('prefills the Description template with the engine default when no project config exists', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([]);
+      if (key === 'project.getConfig') return ok(undefined);
+      return ok(undefined);
+    });
+    render(<App />);
+    await screen.findByText('SAP Transport — Project Settings');
+    expect(
+      screen.getByDisplayValue('{{issue.key}} {{issue.fields.summary}}'),
+    ).toBeInTheDocument();
+  });
+
   it('toggling the radio to Override reveals the hostname/client/username/password form', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'connections.list') return ok([]);

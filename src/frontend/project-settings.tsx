@@ -17,6 +17,8 @@ import { invoke, view } from '@forge/bridge';
 import { SmartValuesPicker } from './components/SmartValuesPicker';
 import type { ProjectConfig, RenderResult, TransportType } from '../lib/types';
 
+const DEFAULT_DESCRIPTION_TEMPLATE = '{{issue.key}} {{issue.fields.summary}}';
+
 interface ConnPublic {
   id: string;
   label: string;
@@ -58,10 +60,15 @@ export const App: React.FC = () => {
       });
       const cfgValue = c.ok ? c.data : undefined;
       if (!c.ok) setMessage(c.error.message);
+      // For a brand-new project (no saved config), seed the Description
+      // template with the engine default so the admin can edit-from-default
+      // rather than start blank. For an existing config without a saved
+      // template, leave it empty so the cascade picks the Connection's
+      // template (or, ultimately, the engine default at render time).
       setCfg(
         cfgValue ?? {
           projectCode: '',
-          descriptionTemplate: '',
+          descriptionTemplate: DEFAULT_DESCRIPTION_TEMPLATE,
           defaults: { type: 'K' },
         },
       );
