@@ -9,6 +9,9 @@ function validateConnection(c: Partial<Connection>): asserts c is Omit<Connectio
   if (!c.hostname || !/^https:\/\/.+/.test(c.hostname)) {
     throw new Error('hostname must be an https URL');
   }
+  if (!c.systemId || !/^[A-Za-z0-9]{3}$/.test(c.systemId)) {
+    throw new Error('systemId must be exactly 3 alphanumeric characters (e.g. A4H); will be uppercased on save');
+  }
   if (!c.client || !/^\d{3}$/.test(c.client)) {
     throw new Error('client must be exactly 3 digits');
   }
@@ -40,6 +43,7 @@ export async function saveConnectionResolver(args: ResolverArgs<Partial<Connecti
     id,
     label: args.payload.label,
     hostname: args.payload.hostname,
+    systemId: args.payload.systemId.toUpperCase(),
     client: args.payload.client,
     username: args.payload.username,
     password: args.payload.password,

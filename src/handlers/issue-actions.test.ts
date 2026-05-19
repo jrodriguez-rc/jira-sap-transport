@@ -88,7 +88,7 @@ vi.mock('../lib/sap-client', () => ({
   BASE_PATH: '/sap'
 }));
 
-const conn: Connection = { id: 'c1', label: 'DEV', hostname: 'https://dev.sap.example', client: '100', username: 'u', password: 'p' };
+const conn: Connection = { id: 'c1', label: 'DEV', hostname: 'https://dev.sap.example', systemId: 'A4H', client: '100', username: 'u', password: 'p' };
 const cfg: ProjectConfig = { connectionId: 'c1', projectCode: 'PRJX', descriptionTemplate: '', defaults: { type: 'K', target: 'QAS' } };
 
 beforeEach(() => {

@@ -27,6 +27,7 @@ interface ConnPublic {
   id: string;
   label: string;
   hostname: string;
+  systemId: string;
   client: string;
   username: string;
   descriptionTemplate?: string;
@@ -125,6 +126,7 @@ export const App: React.FC = () => {
     cells: [
       { key: 'label', content: 'Label' },
       { key: 'hostname', content: 'Hostname' },
+      { key: 'systemId', content: 'System ID' },
       { key: 'client', content: 'Client' },
       { key: 'username', content: 'User' },
       { key: 'actions', content: 'Actions' },
@@ -136,6 +138,7 @@ export const App: React.FC = () => {
     cells: [
       { key: 'label', content: <Text>{c.label}</Text> },
       { key: 'hostname', content: <Text>{c.hostname}</Text> },
+      { key: 'systemId', content: <Text>{c.systemId}</Text> },
       { key: 'client', content: <Text>{c.client}</Text> },
       { key: 'username', content: <Text>{c.username}</Text> },
       {
@@ -263,6 +266,11 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ initial, onSubmi
           <Textfield
             placeholder="https://sap.example.com"
             {...register('hostname', { required: true })}
+          />
+          <Label labelFor="systemId">System ID (3 chars)</Label>
+          <Textfield
+            placeholder="A4H"
+            {...register('systemId', { required: true })}
           />
           <Label labelFor="client">Client (3 digits)</Label>
           <Textfield {...register('client', { required: true })} />

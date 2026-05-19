@@ -152,6 +152,7 @@ export const App: React.FC = () => {
                     id: 'override',
                     label: 'override',
                     hostname: '',
+                    systemId: '',
                     client: '',
                     username: '',
                     password: '',
@@ -191,6 +192,20 @@ export const App: React.FC = () => {
                 connectionOverride: {
                   ...cfg.connectionOverride!,
                   hostname: (e.target as { value?: string }).value ?? '',
+                },
+              })
+            }
+          />
+          <Label labelFor="ov-systemId">System ID (3 chars)</Label>
+          <Textfield
+            placeholder="A4H"
+            value={cfg.connectionOverride.systemId}
+            onChange={(e) =>
+              setCfg({
+                ...cfg,
+                connectionOverride: {
+                  ...cfg.connectionOverride!,
+                  systemId: (e.target as { value?: string }).value ?? '',
                 },
               })
             }
