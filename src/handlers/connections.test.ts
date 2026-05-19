@@ -145,4 +145,44 @@ describe('testConnectionResolver', () => {
       expect(res.error.code).toBe('INVALID_HOSTNAME');
     }
   });
+
+  it('tests a stored connection by id (loads password server-side)', async () => {
+    store.set('connections:stored-id', { id: 'stored-id', label: 'A', hostname: 'https://dev.sap.example', client: '100', username: 'u', password: 'real-secret' });
+    const capture = vi.fn().mockReturnValue({
+      testConnection: async () => ({ ok: true }),
+      createTransport: vi.fn(),
+      releaseTransport: vi.fn(),
+      getTransport: vi.fn()
+    } as never);
+    vi.spyOn(sapClientMod, 'createSapClient').mockImplementation(capture);
+
+    const res = await testConnectionResolver({ payload: { id: 'stored-id' }, context: {} });
+
+    expect(res).toEqual({ ok: true });
+    expect(capture).toHaveBeenCalledWith(expect.objectContaining({
+      hostname: 'https://dev.sap.example',
+      client: '100',
+      username: 'u',
+      password: 'real-secret'
+    }));
+  });
+
+  it('returns a structured error when id refers to a missing connection', async () => {
+    const res = await testConnectionResolver({ payload: { id: 'missing' }, context: {} });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error.code).toBe('NOT_FOUND');
+    }
+  });
+
+  it('returns a structured error when ad-hoc test is missing fields', async () => {
+    const res = await testConnectionResolver({
+      payload: { hostname: 'https://dev.sap.example' },
+      context: {}
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error.code).toBe('INVALID_PAYLOAD');
+    }
+  });
 });

@@ -310,6 +310,39 @@ describe('admin-page App', () => {
     await screen.findByText('Failed');
   });
 
+  it('clicking the per-row Test button calls connections.test with { id }', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok(sampleConnections);
+      if (key === 'connections.test') return { ok: true };
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    const labelCell = await screen.findByText('SAP Dev');
+    const row = labelCell.closest('tr') ?? labelCell.closest('row') ?? document.body;
+    const testBtn = within(row as HTMLElement).getByText('Test');
+    await user.click(testBtn);
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('connections.test', { id: 'sap-dev' });
+    });
+    await screen.findByText('Connection OK');
+  });
+
+  it('per-row Test shows the failure message when the ping fails', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok(sampleConnections);
+      if (key === 'connections.test') return { ok: false, error: { message: 'host unreachable' } };
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    const labelCell = await screen.findByText('SAP Dev');
+    const row = labelCell.closest('tr') ?? labelCell.closest('row') ?? document.body;
+    const testBtn = within(row as HTMLElement).getByText('Test');
+    await user.click(testBtn);
+    await screen.findByText('host unreachable');
+  });
+
   it('clicking Edit on a row populates the form with that row', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'connections.list') return ok(sampleConnections);

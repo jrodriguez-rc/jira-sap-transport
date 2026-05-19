@@ -97,6 +97,24 @@ export const App: React.FC = () => {
     }
   };
 
+  // Test a stored connection by id — server-side loads the password,
+  // so the secret never round-trips through the frontend.
+  const onTestById = async (id: string): Promise<void> => {
+    try {
+      const res = await invoke<{ ok: boolean; error?: { message: string } }>(
+        'connections.test',
+        { id },
+      );
+      setMessage(
+        res.ok
+          ? { kind: 'success', text: 'Connection OK' }
+          : { kind: 'error', text: res.error?.message ?? 'Failed' },
+      );
+    } catch (e) {
+      setMessage({ kind: 'error', text: (e as Error).message });
+    }
+  };
+
   const head = {
     cells: [
       { key: 'label', content: 'Label' },
@@ -119,6 +137,7 @@ export const App: React.FC = () => {
         content: (
           <Inline space="space.100">
             <Button onClick={() => setEditing(c)}>Edit</Button>
+            <Button onClick={() => void onTestById(c.id)}>Test</Button>
             <Button appearance="danger" onClick={() => void onDelete(c.id)}>
               Delete
             </Button>
