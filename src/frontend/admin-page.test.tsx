@@ -372,6 +372,49 @@ describe('admin-page App', () => {
     expect(textarea.value).toBe('{{issue.key}} {{issue.fields.summary}}');
   });
 
+  it('renders the Description template preview as soon as the form opens', async () => {
+    invokeMock.mockImplementation(async (key: string, payload?: unknown) => {
+      if (key === 'connections.list') return ok([]);
+      if (key === 'project.previewTemplate') {
+        const p = payload as { template: string };
+        return ok({ text: 'PRJ-1 Sample summary', length: p.template.length + 5, warnings: [], truncated: false });
+      }
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('connections.list'));
+    await user.click(screen.getByText('+ Add connection'));
+    await screen.findByTitle('New connection');
+    // useEffect should fire previewTemplate once the form mounts with the default.
+    await waitFor(() => {
+      const previewCall = invokeMock.mock.calls.find((c) => c[0] === 'project.previewTemplate');
+      expect(previewCall).toBeDefined();
+    });
+    await screen.findByText(/Preview: "PRJ-1 Sample summary"/);
+  });
+
+  it('clears the connection-form preview when the template is emptied', async () => {
+    invokeMock.mockImplementation(async (key: string, payload?: unknown) => {
+      if (key === 'connections.list') return ok([]);
+      if (key === 'project.previewTemplate') {
+        const p = payload as { template: string };
+        return ok({ text: p.template, length: p.template.length, warnings: [], truncated: false });
+      }
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('connections.list'));
+    await user.click(screen.getByText('+ Add connection'));
+    await screen.findByTitle('New connection');
+    const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+    await user.clear(textarea);
+    expect(textarea.value).toBe('');
+    // Empty template → preview block disappears.
+    await waitFor(() => expect(screen.queryByText(/Preview:/)).not.toBeInTheDocument());
+  });
+
   it('renders the SmartValuesPicker trigger next to the Description template field', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'connections.list') return ok([]);
