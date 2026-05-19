@@ -209,10 +209,3 @@ permissions:
       backend:
         - address: https://*.newmethodologies.net
         - address: https://*.resultoconsultoria.com
-      # Whitelist the SAP ADT custom scheme so the Custom UI issue panel can
-      # invoke router.open('adt://…') to hand the URL off to Eclipse via the
-      # OS protocol handler. Without this, Forge rejects the call as an
-      # invalid link. Must use the explicit `adt:*` form — `*` (full wildcard)
-      # would disqualify the app from "Runs on Atlassian" eligibility.
-      client:
-        - address: 'adt:*'

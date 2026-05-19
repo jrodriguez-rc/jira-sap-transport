@@ -4,14 +4,10 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-const { invokeMock, routerNavigateMock } = vi.hoisted(() => ({
-  invokeMock: vi.fn(),
-  routerNavigateMock: vi.fn(),
-}));
+const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 
 vi.mock('@forge/bridge', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
-  router: { navigate: (...args: unknown[]) => routerNavigateMock(...args) },
   view: {
     getContext: vi.fn(async () => ({
       extension: { project: { id: '10001' }, issue: { key: 'PROJ-1' } },
@@ -55,8 +51,6 @@ const entries: SapTransportEntry[] = [
 
 beforeEach(() => {
   invokeMock.mockReset();
-  routerNavigateMock.mockReset();
-  routerNavigateMock.mockResolvedValue(undefined);
 });
 
 describe('issue-panel App (Custom UI)', () => {
@@ -73,41 +67,25 @@ describe('issue-panel App (Custom UI)', () => {
     expect(screen.getByText('Released')).toBeInTheDocument();
   });
 
-  it('opens Eclipse ADT via router.navigate when the request button is clicked', async () => {
+  it('renders the request id as a plain anchor with the adt:// href', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'issue.list') return ok(entries);
       return ok(undefined);
     });
-    const user = userEvent.setup();
     render(<App />);
-    // The entry with systemId 'A4H' renders the request id as a Button. The
-    // click handler calls router.navigate() — NOT router.open() — because the
-    // Forge iframe sandbox lacks `allow-popups`, so open() (which calls
-    // window.open internally) is blocked. navigate() instead points the
-    // current window at the adt:// URL; the browser hands it off to the OS
-    // protocol handler without changing the iframe content, so the Jira
-    // issue view is preserved.
-    const requestButton = await screen.findByRole('button', { name: 'DEVK900100' });
-    await user.click(requestButton);
-    expect(routerNavigateMock).toHaveBeenCalledWith(
+    // Atlaskit's Button with the `href` prop renders as a real <a> — no
+    // @forge/bridge router involved. Browser click navigates the iframe
+    // itself (no popup, so the sandbox doesn't block it); for the adt://
+    // scheme the OS protocol handler takes over and the iframe content
+    // stays put.
+    const link = await screen.findByRole('link', { name: 'DEVK900100' });
+    expect(link).toHaveAttribute(
+      'href',
       'adt://A4H/sap/bc/adt/cts/transportrequests/DEVK900100',
     );
   });
 
-  it('shows an error banner when router.navigate rejects (e.g. user cancels prompt)', async () => {
-    invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'issue.list') return ok(entries);
-      return ok(undefined);
-    });
-    routerNavigateMock.mockRejectedValueOnce(new Error('user cancelled'));
-    const user = userEvent.setup();
-    render(<App />);
-    const requestButton = await screen.findByRole('button', { name: 'DEVK900100' });
-    await user.click(requestButton);
-    await screen.findByText(/Could not open ADT link: user cancelled/);
-  });
-
-  it('renders the request id as plain text (no button) for legacy entries without systemId', async () => {
+  it('renders the request id as plain text (no link) for legacy entries without systemId', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'issue.list') return ok(entries);
       return ok(undefined);
@@ -115,6 +93,7 @@ describe('issue-panel App (Custom UI)', () => {
     render(<App />);
     await screen.findByText('DEVK900099');
     expect(screen.queryByRole('button', { name: 'DEVK900099' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'DEVK900099' })).toBeNull();
   });
 
   it('shows an error banner when issue.list fails', async () => {

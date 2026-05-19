@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import Button from '@atlaskit/button/new';
+import Button, { LinkButton } from '@atlaskit/button/new';
 import DynamicTable from '@atlaskit/dynamic-table';
 import Heading from '@atlaskit/heading';
 import Modal, {
@@ -11,14 +11,18 @@ import Modal, {
 } from '@atlaskit/modal-dialog';
 import SectionMessage from '@atlaskit/section-message';
 import Textfield from '@atlaskit/textfield';
-import { invoke, router, view } from '@forge/bridge';
-// router.navigate() is preferred over router.open() for the adt:// scheme:
-// router.open() ends up calling window.open() inside the Forge iframe, which
-// the browser blocks because the iframe's sandbox doesn't include
-// `allow-popups`. router.navigate() instead navigates the current window —
-// for a custom scheme like `adt://` the browser hands the URL off to the OS
-// protocol handler without actually changing the iframe content, so the
-// Jira issue view is preserved.
+import { invoke, view } from '@forge/bridge';
+// The ADT link is rendered as a plain anchor (Atlaskit Button with `href`)
+// rather than going through @forge/bridge's router. Both router.open() and
+// router.navigate() eventually call window.open() inside the Forge iframe,
+// which the browser blocks because the iframe's sandbox lacks `allow-popups`
+// (only `permissions.external.fetch.client: - address: '*'` would add that,
+// and using the full wildcard disqualifies the app from "Runs on Atlassian"
+// eligibility). A plain `<a href="adt://...">` without `target="_blank"`
+// navigates the iframe itself instead of opening a popup, so the sandbox
+// doesn't block it; for a custom scheme the browser hands the URL off to
+// the OS protocol handler (Eclipse ADT) and leaves the iframe content
+// unchanged, preserving the Jira issue view.
 import type { SapTransportEntry, TransportType } from './types';
 
 interface IssueContext {
@@ -77,22 +81,6 @@ export const App: React.FC = () => {
     if (!r.ok) setMessage({ kind: 'error', text: r.error.message });
   };
 
-  const onOpenAdt = async (entry: SapTransportEntry): Promise<void> => {
-    if (!entry.systemId) return;
-    const url = buildAdtUrl(entry.systemId, entry.requestId);
-    try {
-      await router.navigate(url);
-    } catch (e) {
-      // router.navigate() rejects when the user cancels the external-link
-      // prompt or when the URL doesn't match permissions.external.fetch.client.
-      // The manifest whitelists adt:* so the latter shouldn't happen.
-      setMessage({
-        kind: 'error',
-        text: `Could not open ADT link: ${(e as Error).message}`,
-      });
-    }
-  };
-
   const onRelease = async (requestId: string): Promise<void> => {
     try {
       const r = await invoke<ResolverResult<unknown>>('issue.release', {
@@ -144,15 +132,13 @@ export const App: React.FC = () => {
       {
         key: 'request',
         content: entry.systemId ? (
-          <Button
+          <LinkButton
             appearance="subtle"
             spacing="compact"
-            onClick={() => {
-              void onOpenAdt(entry);
-            }}
+            href={buildAdtUrl(entry.systemId, entry.requestId)}
           >
             {entry.requestId}
-          </Button>
+          </LinkButton>
         ) : (
           <span>{entry.requestId}</span>
         ),
