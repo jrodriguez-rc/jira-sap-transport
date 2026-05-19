@@ -5,7 +5,6 @@ import ForgeReconciler, {
   DynamicTable,
   Heading,
   Inline,
-  Link,
   Modal,
   ModalBody,
   ModalFooter,
@@ -17,7 +16,7 @@ import ForgeReconciler, {
   Text,
   Textfield,
 } from '@forge/react';
-import { invoke, view } from '@forge/bridge';
+import { invoke, router, view } from '@forge/bridge';
 import type { SapTransportEntry, TransportType } from '../lib/types';
 
 interface IssueContext {
@@ -107,9 +106,22 @@ export const App: React.FC = () => {
       {
         key: 'request',
         content: entry.systemId ? (
-          <Link href={`adt://${entry.systemId}/sap/bc/adt/cts/transportrequests/${entry.requestId}`}>
+          // We need to call `router.open()` from @forge/bridge instead of using
+          // <Link>: UI Kit 2's Link sanitises non-http(s) hrefs, and the Forge
+          // iframe's sandbox blocks <a> clicks to custom schemes. router.open()
+          // delegates to Atlassian's parent frame which can navigate the top
+          // window to the `adt://` URL, letting the OS hand it off to Eclipse.
+          <Button
+            appearance="subtle"
+            spacing="none"
+            onClick={() =>
+              void router.open(
+                `adt://${entry.systemId}/sap/bc/adt/cts/transportrequests/${entry.requestId}`,
+              )
+            }
+          >
             {entry.requestId}
-          </Link>
+          </Button>
         ) : (
           <Text>{entry.requestId}</Text>
         ),

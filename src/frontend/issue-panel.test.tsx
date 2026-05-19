@@ -4,7 +4,10 @@ import React from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+const { invokeMock, routerOpenMock } = vi.hoisted(() => ({
+  invokeMock: vi.fn(),
+  routerOpenMock: vi.fn(),
+}));
 
 vi.mock('@forge/bridge', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
@@ -12,6 +15,12 @@ vi.mock('@forge/bridge', () => ({
     getContext: vi.fn(async () => ({
       extension: { project: { id: '10001' }, issue: { key: 'PROJ-1' } },
     })),
+  },
+  router: {
+    open: (...args: unknown[]) => routerOpenMock(...args),
+    navigate: vi.fn(),
+    reload: vi.fn(),
+    getUrl: vi.fn(),
   },
   events: { on: vi.fn(), once: vi.fn(), emit: vi.fn() },
 }));
@@ -23,17 +32,9 @@ vi.mock('@forge/react', async (importOriginal) => {
   const Textfield = React.forwardRef<HTMLInputElement, any>((props, ref) => (
     <input ref={ref} {...props} />
   ));
-  // Default Link primitive renders as a lowercase <link> string-tag, which is
-  // an HTML head-element and not what jsdom matches with closest('a'). Mock it
-  // as a real <a> so we can assert the href the way a user would experience it.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const Link = ({ href, children, ...rest }: any) => (
-    <a href={href} {...rest}>{children}</a>
-  );
   return {
     ...actual,
     Textfield,
-    Link,
     default: { render: vi.fn(), addConfig: vi.fn() },
   };
 });
@@ -73,6 +74,7 @@ const entries: SapTransportEntry[] = [
 
 beforeEach(() => {
   invokeMock.mockReset();
+  routerOpenMock.mockReset();
 });
 
 describe('issue-panel App', () => {
@@ -89,31 +91,33 @@ describe('issue-panel App', () => {
     expect(screen.getByText('Released')).toBeInTheDocument();
   });
 
-  it('renders the request id as an Eclipse ADT deep-link when the entry carries a systemId', async () => {
+  it('opens the Eclipse ADT deep-link via router.open() when the request button is clicked', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'issue.list') return ok(entries);
       return ok(undefined);
     });
+    const user = userEvent.setup();
     render(<App />);
-    const requestCell = await screen.findByText('DEVK900100');
-    // The element rendered for an entry WITH systemId should be (or be wrapped
-    // by) an <a> with the adt:// scheme. Climb to the nearest anchor.
-    const anchor = requestCell.closest('a');
-    expect(anchor).not.toBeNull();
-    expect(anchor!.getAttribute('href')).toBe(
+    // The request id for the entry with systemId 'A4H' is rendered as a
+    // clickable Button (appearance="link"), not a plain anchor — UI Kit 2
+    // sanitises non-http hrefs and the iframe sandbox blocks <a> clicks to
+    // custom protocols, so we delegate to router.open() instead.
+    const requestButton = await screen.findByRole('button', { name: 'DEVK900100' });
+    await user.click(requestButton);
+    expect(routerOpenMock).toHaveBeenCalledWith(
       'adt://A4H/sap/bc/adt/cts/transportrequests/DEVK900100',
     );
   });
 
-  it('renders the request id as plain text (no link) for legacy entries without systemId', async () => {
+  it('renders the request id as plain text (no button) for legacy entries without systemId', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'issue.list') return ok(entries);
       return ok(undefined);
     });
     render(<App />);
-    const legacyCell = await screen.findByText('DEVK900099');
-    // Legacy entries (no systemId) must NOT be wrapped in an anchor.
-    expect(legacyCell.closest('a')).toBeNull();
+    await screen.findByText('DEVK900099');
+    // Legacy entries (no systemId) must NOT be rendered as a button.
+    expect(screen.queryByRole('button', { name: 'DEVK900099' })).toBeNull();
   });
 
   it('shows an error banner when issue.list fails', async () => {
