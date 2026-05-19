@@ -12,6 +12,13 @@ import Modal, {
 import SectionMessage from '@atlaskit/section-message';
 import Textfield from '@atlaskit/textfield';
 import { invoke, router, view } from '@forge/bridge';
+// router.navigate() is preferred over router.open() for the adt:// scheme:
+// router.open() ends up calling window.open() inside the Forge iframe, which
+// the browser blocks because the iframe's sandbox doesn't include
+// `allow-popups`. router.navigate() instead navigates the current window —
+// for a custom scheme like `adt://` the browser hands the URL off to the OS
+// protocol handler without actually changing the iframe content, so the
+// Jira issue view is preserved.
 import type { SapTransportEntry, TransportType } from './types';
 
 interface IssueContext {
@@ -74,9 +81,9 @@ export const App: React.FC = () => {
     if (!entry.systemId) return;
     const url = buildAdtUrl(entry.systemId, entry.requestId);
     try {
-      await router.open(url);
+      await router.navigate(url);
     } catch (e) {
-      // router.open() rejects when the user cancels the external-link
+      // router.navigate() rejects when the user cancels the external-link
       // prompt or when the URL doesn't match permissions.external.fetch.client.
       // The manifest whitelists adt:* so the latter shouldn't happen.
       setMessage({
