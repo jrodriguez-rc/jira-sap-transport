@@ -189,6 +189,16 @@ docker run --rm -v "C:\Users\jaime\projects\jira-abap-connector:/app" -w /app no
     git -c user.email=jrodriguez@resultoconsultoria.com -c user.name="Jaime Rodriguez" commit ...
     ```
 
+11. **🔥 `forge deploy` does NOT update the installed app when `permissions.*` changes.** Any change to `permissions.scopes` or `permissions.external.fetch.*` triggers a **major-version bump** on deploy. The installation on the site stays pinned to the previous major (shown as `Outdated app` by `forge install list`) until you explicitly run:
+    ```
+    npx @forge/cli install --upgrade --product Jira --site standardised.atlassian.net --environment development
+    ```
+    **Symptom that bit us hard in PR #11 sandbox debugging:** "I deployed the fix three times and the browser still shows the same error." The fixes were in v3/v4, but the browser was loading v2. Always before assuming a Forge fix didn't work:
+    1. Run `npx @forge/cli install list` and check the `App version` column matches the latest deployed major.
+    2. If `Outdated app`, run `install --upgrade`. The user has to re-accept the new permissions in the browser.
+
+12. **ADT `adt://` deep-link from Custom UI requires `permissions.external.fetch.client: - address: '*'`.** Per [Atlassian docs](https://developer.atlassian.com/platform/forge/manifest-reference/permissions/#allow-for-popups-from-frames) this is the ONLY pattern that appends `allow-popups` + `allow-popups-to-escape-sandbox` to the iframe sandbox. Narrower patterns (`adt:*`, `https://*`, etc.) leave the sandbox locked, and every navigation path (router.open, router.navigate, plain anchor, window.open) gets blocked with `Blocked opening '…' in a new window because the request was made in a sandboxed frame whose 'allow-popups' permission is not set`. The wildcard costs only the "Runs on Atlassian" Marketplace badge — irrelevant for this app, which is already ineligible because of the SAP `backend:` egress.
+
 ---
 
 ## Open follow-ups deferred from earlier code reviews
