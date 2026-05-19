@@ -4,10 +4,7 @@ import React from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-const { invokeMock, routerOpenMock } = vi.hoisted(() => ({
-  invokeMock: vi.fn(),
-  routerOpenMock: vi.fn(),
-}));
+const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 
 vi.mock('@forge/bridge', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
@@ -15,12 +12,6 @@ vi.mock('@forge/bridge', () => ({
     getContext: vi.fn(async () => ({
       extension: { project: { id: '10001' }, issue: { key: 'PROJ-1' } },
     })),
-  },
-  router: {
-    open: (...args: unknown[]) => routerOpenMock(...args),
-    navigate: vi.fn(),
-    reload: vi.fn(),
-    getUrl: vi.fn(),
   },
   events: { on: vi.fn(), once: vi.fn(), emit: vi.fn() },
 }));
@@ -74,7 +65,6 @@ const entries: SapTransportEntry[] = [
 
 beforeEach(() => {
   invokeMock.mockReset();
-  routerOpenMock.mockReset();
 });
 
 describe('issue-panel App', () => {
@@ -91,22 +81,27 @@ describe('issue-panel App', () => {
     expect(screen.getByText('Released')).toBeInTheDocument();
   });
 
-  it('opens the Eclipse ADT deep-link via router.open() when the request button is clicked', async () => {
+  it('opens the Eclipse ADT deep-link via window.open() when the request button is clicked', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'issue.list') return ok(entries);
       return ok(undefined);
     });
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
     const user = userEvent.setup();
     render(<App />);
     // The request id for the entry with systemId 'A4H' is rendered as a
-    // clickable Button (appearance="link"), not a plain anchor — UI Kit 2
-    // sanitises non-http hrefs and the iframe sandbox blocks <a> clicks to
-    // custom protocols, so we delegate to router.open() instead.
+    // clickable Button. We can't use <Link href="adt://"> (UI Kit 2 sanitises
+    // non-http) or router.open() (Atlassian's parent frame sanitises too),
+    // so the click handler calls window.open directly — the user-initiated
+    // click is enough for the browser to invoke the OS protocol handler.
     const requestButton = await screen.findByRole('button', { name: 'DEVK900100' });
     await user.click(requestButton);
-    expect(routerOpenMock).toHaveBeenCalledWith(
+    expect(openSpy).toHaveBeenCalledWith(
       'adt://A4H/sap/bc/adt/cts/transportrequests/DEVK900100',
+      '_blank',
+      'noopener,noreferrer',
     );
+    openSpy.mockRestore();
   });
 
   it('renders the request id as plain text (no button) for legacy entries without systemId', async () => {

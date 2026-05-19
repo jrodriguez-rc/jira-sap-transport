@@ -16,7 +16,7 @@ import ForgeReconciler, {
   Text,
   Textfield,
 } from '@forge/react';
-import { invoke, router, view } from '@forge/bridge';
+import { invoke, view } from '@forge/bridge';
 import type { SapTransportEntry, TransportType } from '../lib/types';
 
 interface IssueContext {
@@ -106,19 +106,24 @@ export const App: React.FC = () => {
       {
         key: 'request',
         content: entry.systemId ? (
-          // We need to call `router.open()` from @forge/bridge instead of using
-          // <Link>: UI Kit 2's Link sanitises non-http(s) hrefs, and the Forge
-          // iframe's sandbox blocks <a> clicks to custom schemes. router.open()
-          // delegates to Atlassian's parent frame which can navigate the top
-          // window to the `adt://` URL, letting the OS hand it off to Eclipse.
+          // Open via plain `window.open` from a click handler. We can't use:
+          //   - <Link href="adt://...">: UI Kit 2's Link sanitises non-http
+          //     hrefs and strips the URL.
+          //   - router.open() from @forge/bridge: Atlassian's parent frame
+          //     also sanitises non-http schemes before navigating.
+          // The browser allows window.open(customScheme, '_blank') as long
+          // as the call comes from a user-initiated event (the click), so
+          // the OS protocol handler (Eclipse ADT) gets invoked normally.
           <Button
             appearance="subtle"
             spacing="none"
-            onClick={() =>
-              void router.open(
+            onClick={() => {
+              window.open(
                 `adt://${entry.systemId}/sap/bc/adt/cts/transportrequests/${entry.requestId}`,
-              )
-            }
+                '_blank',
+                'noopener,noreferrer',
+              );
+            }}
           >
             {entry.requestId}
           </Button>
