@@ -21,8 +21,12 @@ async function resolveConnection(projectId: string): Promise<{ conn: Connection;
   throw new ConfigError('No SAP connection configured for project');
 }
 
-async function fetchUserEmail(accountId: string): Promise<string> {
-  const res = await api.asApp().requestJira(route`/rest/api/3/user?accountId=${accountId}`);
+async function fetchUserEmail(): Promise<string> {
+  // /rest/api/3/myself returns the calling user's own profile, and Atlassian
+  // always returns `emailAddress` to the user themselves (privacy filters only
+  // hide emails between users). Using `asUser()` so the call is scoped to the
+  // human who triggered the action, not the app actor.
+  const res = await api.asUser().requestJira(route`/rest/api/3/myself`);
   if (res.status !== 200) throw new Error(`Cannot resolve user email (status ${res.status})`);
   const u = (await res.json()) as { emailAddress?: string };
   if (!u.emailAddress) throw new Error('User has no email visible to the app');
@@ -54,14 +58,7 @@ export async function createTransportResolver(args: ResolverArgs<{
   const started = Date.now();
   try {
     const { conn, cfg } = await resolveConnection(args.payload.projectId);
-    const accountId = args.context.accountId;
-    let email: string;
-    if (args.payload.emailOverride) {
-      email = args.payload.emailOverride;
-    } else {
-      if (!accountId) throw new Error('Missing accountId');
-      email = await fetchUserEmail(accountId);
-    }
+    const email = args.payload.emailOverride ?? (await fetchUserEmail());
     const issue = await fetchIssue(args.payload.issueKey);
 
     const renderCtx = { issue, project: { code: cfg.projectCode }, user: { email }, date: { iso: new Date().toISOString().slice(0, 10) } };

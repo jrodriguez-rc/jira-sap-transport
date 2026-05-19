@@ -121,6 +121,57 @@ describe('project-settings App', () => {
     await screen.findByText('SAP Transport — Project Settings');
   });
 
+  it('prefills the Description template with the engine default when no project config exists', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([]);
+      if (key === 'project.getConfig') return ok(undefined);
+      return ok(undefined);
+    });
+    render(<App />);
+    await screen.findByText('SAP Transport — Project Settings');
+    expect(
+      screen.getByDisplayValue('{{issue.key}} {{issue.fields.summary}}'),
+    ).toBeInTheDocument();
+  });
+
+  it('renders the Description template preview on initial load (without typing first)', async () => {
+    invokeMock.mockImplementation(async (key: string, payload?: unknown) => {
+      if (key === 'connections.list') return ok([]);
+      if (key === 'project.getConfig') return ok(undefined);
+      if (key === 'project.previewTemplate') {
+        const p = payload as { template: string };
+        return ok({ text: 'PRJ-1 Sample summary', length: p.template.length + 5, warnings: [], truncated: false });
+      }
+      return ok(undefined);
+    });
+    render(<App />);
+    await screen.findByText('SAP Transport — Project Settings');
+    // Preview should appear automatically once cfg is loaded.
+    await waitFor(() => {
+      const previewCall = invokeMock.mock.calls.find((c) => c[0] === 'project.previewTemplate');
+      expect(previewCall).toBeDefined();
+    });
+    await screen.findByText(/Preview: "PRJ-1 Sample summary"/);
+  });
+
+  it('clears the preview when the template is emptied', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([]);
+      if (key === 'project.getConfig') {
+        return ok({
+          projectCode: '',
+          descriptionTemplate: '',   // empty from start
+          defaults: { type: 'K' as const },
+        });
+      }
+      return ok(undefined);
+    });
+    render(<App />);
+    await screen.findByText('SAP Transport — Project Settings');
+    // No preview should be rendered when template is empty on initial load.
+    expect(screen.queryByText(/Preview:/)).not.toBeInTheDocument();
+  });
+
   it('toggling the radio to Override reveals the hostname/client/username/password form', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'connections.list') return ok([]);

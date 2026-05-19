@@ -19,6 +19,7 @@ import ForgeReconciler, {
 } from '@forge/react';
 import { invoke } from '@forge/bridge';
 import { SmartValuesPicker } from './components/SmartValuesPicker';
+import type { RenderResult } from '../lib/types';
 
 const DEFAULT_DESCRIPTION_TEMPLATE = '{{issue.key}} {{issue.fields.summary}}';
 
@@ -201,24 +202,59 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ initial, onSubmi
     defaultValues: seeded,
   });
 
-  // Description template is held in component state so the SmartValuesPicker
-  // can append tokens. @forge/react's TextArea does not expose a DOM ref, so
-  // we can't insert at the caret — tokens are appended at the end and the
-  // admin can re-order manually.
+  // Description template is held in component state as the single source of
+  // truth so the SmartValuesPicker can append tokens. We do NOT register the
+  // textarea with react-hook-form: doing so makes @forge/react's TextArea
+  // ignore the controlled `value` on first render (the user sees an empty
+  // field until they type and delete a character, at which point React
+  // re-applies the controlled value). Instead we inject `template` into the
+  // submitted values via a wrapper on handleSubmit.
+  //
+  // @forge/react's TextArea does not expose a DOM ref, so SmartValuesPicker
+  // tokens are appended at the end of the current value rather than at the
+  // caret position.
   const [template, setTemplate] = useState<string>(seededTemplate);
-  const templateRegister = register('descriptionTemplate');
+  const [preview, setPreview] = useState<RenderResult | null>(null);
+
+  // Refresh the preview whenever the template changes (including on mount,
+  // so the admin sees what the seeded default renders to without typing).
+  useEffect(() => {
+    let cancelled = false;
+    if (template.length === 0) {
+      setPreview(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+    void (async () => {
+      const r = await invoke<ResolverResult<RenderResult>>('project.previewTemplate', {
+        template,
+        sampleContext: {
+          issue: { key: 'PRJ-1', fields: { summary: 'Sample summary' } },
+        },
+      });
+      if (!cancelled && r.ok) setPreview(r.data);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [template]);
 
   const onPickToken = (tok: string): void => {
-    const next = template.length > 0 && !template.endsWith(' ') ? template + ' ' + tok : template + tok;
-    setTemplate(next);
-    // Sync into react-hook-form so submission picks the new value.
-    // useForm's onChange dispatches on event.target.type — 'textarea' routes via setValue.
-    templateRegister.onChange?.({ target: { type: 'textarea', value: next } } as never);
+    setTemplate((prev) =>
+      prev.length > 0 && !prev.endsWith(' ') ? prev + ' ' + tok : prev + tok,
+    );
   };
+
+  const submitWithTemplate = (values: Record<string, string>): Promise<void> =>
+    onSubmit({ ...values, descriptionTemplate: template });
+
+  const testWithTemplate = (): Promise<void> =>
+    onTest({ ...getValues(), descriptionTemplate: template });
 
   return (
     <Box padding="space.200">
-      <Form onSubmit={handleSubmit(onSubmit)}>
+      <Form onSubmit={handleSubmit(submitWithTemplate)}>
         <FormHeader title={initial.id ? 'Edit connection' : 'New connection'} />
         <FormSection>
           <Label labelFor="label">Label</Label>
@@ -239,21 +275,28 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ initial, onSubmi
             <SmartValuesPicker onInsert={onPickToken} />
           </Inline>
           <TextArea
-            {...templateRegister}
+            name="descriptionTemplate"
             value={template}
-            onChange={(e) => {
-              const v = (e.target as { value?: string }).value ?? '';
-              setTemplate(v);
-              templateRegister.onChange?.(e);
-            }}
+            onChange={(e) => setTemplate((e.target as { value?: string }).value ?? '')}
           />
+          {preview && (
+            <Box padding="space.100">
+              <Text>
+                Preview: "{preview.text}" ({preview.length}/60
+                {preview.truncated ? ' — truncated' : ''})
+              </Text>
+              {preview.warnings.map((w) => (
+                <Text key={w}>⚠ {w}</Text>
+              ))}
+            </Box>
+          )}
         </FormSection>
         <FormFooter>
           <Inline space="space.100">
             <Button type="submit" appearance="primary">
               Save
             </Button>
-            <Button onClick={() => void onTest(getValues())}>Test connection</Button>
+            <Button onClick={() => void testWithTemplate()}>Test connection</Button>
             <Button onClick={onCancel}>Cancel</Button>
           </Inline>
         </FormFooter>

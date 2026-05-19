@@ -7,9 +7,12 @@ const userByAcct = new Map<string, { emailAddress?: string }>([
   ['acc1', { emailAddress: 'a@b.com' }],
   ['acc-no-email', {}] // user exists but emailAddress is hidden
 ]);
-// Special accountId 'acc-403' triggers a non-200 response from /user; special
+// Identity of the user that /rest/api/3/myself answers for. Tests mutate this
+// to simulate the no-email and 4xx error branches. Reset in beforeEach.
+let currentUserAccountId = 'acc1';
+// Special currentUserAccountId 'acc-403' triggers a non-200 from /myself; special
 // issueKey 'BROKEN-1' triggers a non-200 from /issue. Both are wired here so the
-// resolver's defensive error branches (issue-actions.ts L26 and L34) are exercised.
+// resolver's defensive error branches are exercised.
 
 vi.mock('@forge/kvs', () => ({
   kvs: {
@@ -41,13 +44,6 @@ vi.mock('@forge/api', () => ({
             return { status: 200, json: async () => ({}) };
           }
         }
-        const userMatch = path.match(/\/rest\/api\/3\/user\?accountId=(.+)$/);
-        if (userMatch) {
-          const acct = decodeURIComponent(userMatch[1]);
-          if (acct === 'acc-403') return { status: 403, json: async () => ({}) };
-          const u = userByAcct.get(acct);
-          return { status: 200, json: async () => u ?? {} };
-        }
         const issueMatch = path.match(/\/rest\/api\/3\/issue\/([^/?]+)(?:\?.*)?$/);
         if (issueMatch) {
           if (issueMatch[1] === 'BROKEN-1') return { status: 500, json: async () => ({}) };
@@ -56,7 +52,17 @@ vi.mock('@forge/api', () => ({
         throw new Error('unexpected path ' + path);
       })
     }),
-    asUser: () => ({})
+    asUser: () => ({
+      requestJira: vi.fn(async (path: string) => {
+        if (path.endsWith('/rest/api/3/myself')) {
+          const acct = currentUserAccountId;
+          if (acct === 'acc-403') return { status: 403, json: async () => ({}) };
+          const u = userByAcct.get(acct);
+          return { status: 200, json: async () => u ?? {} };
+        }
+        throw new Error('unexpected asUser path ' + path);
+      })
+    })
   },
   route: (s: TemplateStringsArray, ...args: unknown[]) =>
     s.reduce((acc, part, i) => acc + part + (args[i] ?? ''), '')
@@ -90,6 +96,7 @@ beforeEach(() => {
   issueProps.clear();
   appStore.set('connections:c1', conn);
   appStore.set('project:10001:config', cfg);
+  currentUserAccountId = 'acc1';
 });
 
 import { createTransportResolver, linkTransportResolver, releaseTransportResolver, refreshTransportResolver, listTransportsResolver } from './issue-actions';
@@ -247,14 +254,16 @@ describe('createTransportResolver — defensive branches', () => {
     expect(r.requestId).toBe('DEVK900123');
   });
 
-  it('rejects when /user returns a non-200 status', async () => {
+  it('rejects when /myself returns a non-200 status', async () => {
+    currentUserAccountId = 'acc-403';
     await expect(createTransportResolver({
       payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
       context: { accountId: 'acc-403' }
     })).rejects.toThrow(/Cannot resolve user email/);
   });
 
-  it('rejects when /user returns 200 but no emailAddress', async () => {
+  it('rejects when /myself returns 200 but no emailAddress', async () => {
+    currentUserAccountId = 'acc-no-email';
     await expect(createTransportResolver({
       payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
       context: { accountId: 'acc-no-email' }
@@ -268,14 +277,7 @@ describe('createTransportResolver — defensive branches', () => {
     })).rejects.toThrow(/Cannot read issue/);
   });
 
-  it('rejects when there is no accountId and no emailOverride', async () => {
-    await expect(createTransportResolver({
-      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
-      context: {}
-    })).rejects.toThrow(/Missing accountId/);
-  });
-
-  it('uses emailOverride and skips the /user lookup entirely', async () => {
+  it('uses emailOverride and skips the /myself lookup entirely', async () => {
     // accountId is missing on purpose — the emailOverride path is the bypass.
     const r = await createTransportResolver({
       payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K', emailOverride: 'auto@bot.com' },
