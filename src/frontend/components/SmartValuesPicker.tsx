@@ -1,16 +1,30 @@
 // src/frontend/components/SmartValuesPicker.tsx
 //
-// Compact "{ }" trigger button that opens a categorised list of supported
-// template tokens. Clicking a token calls `onInsert("{{path}}")` so the
-// parent decides where/how to splice it into the underlying TextArea.
+// Floating popover, triggered by a compact "{ }" button. Opens a searchable
+// list of supported template tokens grouped by category. Clicking a token
+// calls `onInsert("{{path}}")` so the parent decides where/how to splice it
+// into the underlying TextArea.
 //
-// Implementation note: `@forge/react`'s TextArea does not expose a DOM ref,
-// so the parent typically appends the token at the end of the current value
-// rather than at the caret position. The component itself is unaware of
-// that limitation — it just emits tokens.
+// Implementation notes:
+//
+// - Uses `Popup` from `@forge/react`, which renders the content as a
+//   positioned overlay (not inline), so the textarea below the trigger stays
+//   in place — unlike the previous inline-expand implementation.
+//
+// - `@forge/react`'s `TextArea` does not expose a DOM ref, so the parent
+//   appends the token at the end of the current value rather than at the
+//   caret position. The component itself is unaware of that limitation.
 
-import React, { useState } from 'react';
-import { Box, Button, Heading, Inline, Stack, Text } from '@forge/react';
+import React, { useMemo, useState } from 'react';
+import {
+  Box,
+  Button,
+  Heading,
+  Popup,
+  Stack,
+  Text,
+  Textfield,
+} from '@forge/react';
 
 export interface SmartValuesPickerProps {
   onInsert: (token: string) => void;
@@ -45,17 +59,37 @@ export const SMART_VALUES_CATEGORIES: TokenCategory[] = [
   },
 ];
 
+function filterCategories(query: string): TokenCategory[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return SMART_VALUES_CATEGORIES;
+  return SMART_VALUES_CATEGORIES.map((cat) => ({
+    ...cat,
+    tokens: cat.tokens.filter((tok) => tok.toLowerCase().includes(q)),
+  })).filter((cat) => cat.tokens.length > 0);
+}
+
 export const SmartValuesPicker: React.FC<SmartValuesPickerProps> = ({ onInsert }) => {
   const [open, setOpen] = useState<boolean>(false);
+  const [query, setQuery] = useState<string>('');
+
+  const close = (): void => {
+    setOpen(false);
+    setQuery('');
+  };
 
   const handleInsert = (path: string): void => {
     onInsert('{{' + path + '}}');
-    setOpen(false);
+    close();
   };
 
+  const filtered = useMemo(() => filterCategories(query), [query]);
+
   return (
-    <Stack space="space.050">
-      <Inline space="space.050">
+    <Popup
+      isOpen={open}
+      onClose={close}
+      placement="bottom-start"
+      trigger={() => (
         <Button
           appearance="subtle"
           onClick={() => setOpen((v) => !v)}
@@ -64,18 +98,28 @@ export const SmartValuesPicker: React.FC<SmartValuesPickerProps> = ({ onInsert }
         >
           {'{ }'}
         </Button>
-      </Inline>
-      {open && (
-        <Box padding="space.100">
+      )}
+      content={() => (
+        <Box padding="space.150">
           <Stack space="space.100">
-            {SMART_VALUES_CATEGORIES.map((cat) => (
+            <Textfield
+              value={query}
+              onChange={(e) => setQuery((e.target as { value?: string }).value ?? '')}
+              placeholder="Search variables..."
+              aria-label="Search variables"
+            />
+            {filtered.length === 0 && (
+              <Text>No variables match "{query}".</Text>
+            )}
+            {filtered.map((cat) => (
               <Stack key={cat.name} space="space.050">
-                <Heading as="h4">{cat.name}</Heading>
+                <Heading as="h6">{cat.name}</Heading>
                 <Stack space="space.025">
                   {cat.tokens.map((tok) => (
                     <Button
                       key={tok}
                       appearance="subtle"
+                      shouldFitContainer
                       onClick={() => handleInsert(tok)}
                     >
                       <Text>{'{{' + tok + '}}'}</Text>
@@ -87,6 +131,6 @@ export const SmartValuesPicker: React.FC<SmartValuesPickerProps> = ({ onInsert }
           </Stack>
         </Box>
       )}
-    </Stack>
+    />
   );
 };
