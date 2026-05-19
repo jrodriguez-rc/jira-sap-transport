@@ -259,7 +259,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({ initial, onSubmi
             <Button type="submit" appearance="primary">
               Save
             </Button>
-            <Button onClick={() => void onTest(getValues())}>Test connection</Button>
+            <Button onClick={() => void testWithTemplate()}>Test connection</Button>
             <Button onClick={onCancel}>Cancel</Button>
           </Inline>
         </FormFooter>
