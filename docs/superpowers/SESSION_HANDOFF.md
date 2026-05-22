@@ -1,6 +1,6 @@
 # Session Handoff — Jira–SAP Transport Connector
 
-**Date:** 2026-05-19 (PR #11 merged)
+**Date:** 2026-05-22 (PR #12 merged)
 **Repository:** https://github.com/jrodriguez-rc/jira-sap-transport
 **Local path:** `C:\Users\jaime\projects\jira-abap-connector`
 **Atlassian instance:** `standardised.atlassian.net` (Jira)
@@ -21,6 +21,7 @@
 | #9 | Admin UX improvements | (a) reuse stored password on edit, (b) per-row Test action, (c) Description template at Connection level + cascade, (d) `SmartValuesPicker` (Popup with search) |
 | #10 | Default Description template visible on first render + preview on initial load + email lookup via `asUser /myself` | Fixed multiple bugs that surfaced in real smoke test |
 | #11 | SAP System ID + Custom UI issue panel + adt:// deep-link | Added 3-char SID to Connection. Migrated `jira:issuePanel` from UI Kit 2 to Custom UI (Vite 8 + @atlaskit/* + ReactDOM). Request ID button calls `router.open('adt://…')`. Manifest declares `permissions.external.fetch.client: - address: '*'` so Forge appends `allow-popups` to the iframe sandbox — the only pattern that does this per Atlassian docs. CI now builds the bundle before tests. Node 22 in CI (Vite 8 needs ≥20.19). |
+| #12 | Multi-config project model + automation `configLabel` | Replaced the single per-project transport config (`projectCode + defaults: {type, target}` at the top level of `ProjectConfig`) with `configs: TransportConfig[]` — each entry is `{id, label, type, target?, projectCode?}`. Connection and `descriptionTemplate` stay project-level. Backend resolvers go from `project.saveConfig` to `project.saveSettings` + `project.config.add/update/delete`; `getProjectConfig` normalises legacy docs on read (hard cutover — legacy `projectCode`/`defaults` fields silently dropped). `issue.create` takes `configId`; `automation.create` action's manifest input changes from `type+target` to `configLabel` (case-sensitive exact match; miss surfaces an error listing valid labels). Both create paths share a `createTransportFromConfig` helper. Issue panel renders one `+ <label>` button per config with a simplified Create modal (only description override; target gone — define another config if you need a different target). Project-settings page reorganised into Connection / Template / Configs sections with inline CRUD via modal. `target` and `projectCode` are optional on each config — blank input is persisted as `undefined` and the SAP client / template engine fall back gracefully. Spec at `docs/superpowers/specs/2026-05-22-project-multi-config-design.md`, plan at `docs/superpowers/plans/2026-05-22-project-multi-config-implementation.md`. |
 
 ---
 
@@ -28,11 +29,23 @@
 
 No active blockers. Pick from the Open follow-ups list below, or whatever the user prioritises.
 
-If working on the Custom UI issue panel:
-- `static/issue-panel/src/App.tsx` is the component
-- `static/issue-panel/src/App.test.tsx` is the suite (20 tests)
+If working on the issue panel (Custom UI):
+- `static/issue-panel/src/App.tsx` is the component (~380 lines, App + CreateDialog + LinkDialog)
+- `static/issue-panel/src/App.test.tsx` is the suite (23 tests)
 - `npm run build:issue-panel` to produce `static/issue-panel/build/`
-- For local dev iteration, consider adding a `tunnel:` block to the manifest resource (port the Vite dev server) — not done yet, the user has been running full `forge deploy` for each iteration.
+- The mount-effect calls `invoke('project.getConfig')` to load the configs array; render() emits one `+ <label>` button per entry plus the empty-state branch when there are none.
+
+If working on the project-settings page (UI Kit 2):
+- `src/frontend/project-settings.tsx` is the component (~370 lines, three sections + inline draft block)
+- `src/frontend/project-settings.test.tsx` is the suite (16 tests)
+- CRUD goes through `project.config.add/update/delete`; project-level fields through `project.saveSettings`.
+
+If working on the backend resolvers:
+- `src/handlers/project-config.ts` holds the 5 resolvers + `normalizeProjectConfig` legacy shim
+- `src/handlers/issue-actions.ts` exposes `createTransportFromConfig` as the shared create path; both `issue.create` (panel) and `automation.create` (rule) delegate to it
+- `src/handlers/automation.ts` has `automationCreate` looking up the config by exact-match label
+
+For local dev iteration, consider adding a `tunnel:` block to the manifest resource (port the Vite dev server) — not done yet, the user has been running full `forge deploy` for each iteration.
 
 ## Recurring gotchas to be aware of
 
@@ -90,13 +103,15 @@ If working on the Custom UI issue panel:
 ## Open follow-ups deferred from earlier code reviews
 
 - Strip `connectionOverride.password` in `getProjectConfigResolver` before returning to the frontend.
-- Reuse the stored password when editing a connection with an empty password field (already done in PR #9 — verify still working after the issue-panel migration).
-- Extract a `STATUS_RELEASED = 'R'` constant instead of the magic char in `automation.ts` and `issue-panel.tsx`.
+- Extract a `STATUS_RELEASED = 'R'` constant instead of the magic char in `automation.ts` and `issue-panel/src/App.tsx`.
 - Decide automation `release` smart-value contract: arrays vs `sapTransport.*` projection.
 - Forge Remote `configurable` upgrade: when Atlassian moves the EAP to GA, revisit PR #7's design (25 slots) and migrate back from static egress patterns to per-customer configurable remotes.
+- project-settings.tsx: move test queries off `getAllByRole('textbox')[index]` to `data-testid` / `getByLabelText` so the test mock for `TextArea` (currently a `<div>` to avoid the role collision) becomes a normal `<textarea>` again. Same sweep should land in `static/issue-panel/src/App.test.tsx` so both UIs use the same pattern.
+- project-settings.tsx: split into smaller components if it grows further (`<ConfigDraft>`, `<ConnectionOverrideForm>`, `<TransportConfigsList>` are the natural seams). Currently ~370 lines, still cohesive — defer.
+- Spec doc (`docs/superpowers/specs/2026-05-22-project-multi-config-design.md`) refresh: the as-shipped behaviour relaxes `target` and `projectCode` to optional (vs the original "Non-empty" rule); doc updated in the same series of commits to stay coherent for future reference.
 
 ---
 
 ## State of the code at handoff
 
-`main` is at PR #11 merged. Tests 207/207 green, coverage 98.36 / 90.65 / 98.13 / 99.29. `forge lint` clean (with the documented `*` egress warning, which is intentional — see gotcha #12). The ADT deep-link works end-to-end in `standardised.atlassian.net`.
+`main` is at PR #12 merged. Tests 247/247 green, coverage 98.09 / 90.64 / 98.94 / 99.54 (all ≥90%). `forge lint` clean (with the documented `*` egress warning, which is intentional — see gotcha #12). The multi-config issue panel works end-to-end on `standardised.atlassian.net` — admins create one or more transport configurations from project-settings, each appears as a `+ <label>` button in the issue panel, the Jira Automation action `create-sap-transport` selects a config by `configLabel`, and the ADT deep-link via `router.open('adt://…')` still opens Eclipse from the Request ID button.
