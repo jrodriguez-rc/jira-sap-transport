@@ -102,7 +102,11 @@ export const App: React.FC = () => {
       sampleContext: { issue: { key: `${sampleCode}-1`, fields: { summary: 'Sample summary' } } },
     });
     if (r.ok) setPreview(r.data);
-    else setMessage(r.error.message);
+    // Preview is a transient nicety — don't pollute the shared top-of-page
+    // banner with a failure here (that surface is reserved for the
+    // load/save errors that block the user). Worst case the preview just
+    // doesn't update; the user keeps typing.
+    else console.warn('project.previewTemplate failed:', r.error.message);
   };
 
   const refreshProject = async (): Promise<void> => {
@@ -262,7 +266,9 @@ export const App: React.FC = () => {
             const cur = cfg.descriptionTemplate ?? '';
             const next = cur.length > 0 && !cur.endsWith(' ') ? cur + ' ' + tok : cur + tok;
             setCfg({ ...cfg, descriptionTemplate: next });
-            void onPreview(next);
+            // No eager onPreview here — the useEffect on
+            // [cfg?.descriptionTemplate] picks it up. Previously this
+            // double-fired previewTemplate on every keystroke.
           }}
         />
       </Inline>
@@ -271,7 +277,7 @@ export const App: React.FC = () => {
         onChange={(e) => {
           const next = (e.target as { value?: string }).value ?? '';
           setCfg({ ...cfg, descriptionTemplate: next });
-          void onPreview(next);
+          // No eager onPreview here either — see SmartValuesPicker above.
         }}
       />
       {preview && (

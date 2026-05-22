@@ -63,20 +63,27 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     void (async () => {
-      const ctx = (await view.getContext()) as unknown as IssueContext;
-      setProjectId(ctx.extension.project.id);
-      setIssueKey(ctx.extension.issue.key);
-      const [list, project] = await Promise.all([
-        invoke<ResolverResult<SapTransportEntry[]>>('issue.list', {
-          issueKey: ctx.extension.issue.key,
-        }),
-        invoke<ResolverResult<ProjectConfig | undefined>>('project.getConfig', {
-          projectId: ctx.extension.project.id,
-        }),
-      ]);
-      setEntries(list.ok ? list.data : []);
-      if (!list.ok) setMessage({ kind: 'error', text: list.error.message });
-      setConfigs(project.ok && project.data ? project.data.configs : []);
+      try {
+        const ctx = (await view.getContext()) as unknown as IssueContext;
+        setProjectId(ctx.extension.project.id);
+        setIssueKey(ctx.extension.issue.key);
+        const [list, project] = await Promise.all([
+          invoke<ResolverResult<SapTransportEntry[]>>('issue.list', {
+            issueKey: ctx.extension.issue.key,
+          }),
+          invoke<ResolverResult<ProjectConfig | undefined>>('project.getConfig', {
+            projectId: ctx.extension.project.id,
+          }),
+        ]);
+        setEntries(list.ok ? list.data : []);
+        if (!list.ok) setMessage({ kind: 'error', text: list.error.message });
+        setConfigs(project.ok && project.data ? project.data.configs : []);
+      } catch (e) {
+        // Without this, a synchronous reject from view.getContext() or
+        // either invoke() leaves the panel empty with no visible error.
+        // Same pattern used by onRelease/onRefresh below.
+        setMessage({ kind: 'error', text: (e as Error).message });
+      }
     })();
   }, []);
 
@@ -199,22 +206,16 @@ export const App: React.FC = () => {
         emptyView={<span>No transports linked to this issue.</span>}
       />
 
-      {configs.length === 0 ? (
-        <div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <Button onClick={() => setLinkOpen(true)}>Link existing</Button>
-          </div>
-          <p style={{ color: '#626f86', marginTop: 8 }}>
-            ⚠ Ask a project admin to add a transport configuration in project settings before creating new requests.
-          </p>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {configs.map((c) => (
-            <Button key={c.id} onClick={() => setCreateFor(c)}>{`+ ${c.label}`}</Button>
-          ))}
-          <Button onClick={() => setLinkOpen(true)}>Link existing</Button>
-        </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {configs.map((c) => (
+          <Button key={c.id} onClick={() => setCreateFor(c)}>{`+ ${c.label}`}</Button>
+        ))}
+        <Button onClick={() => setLinkOpen(true)}>Link existing</Button>
+      </div>
+      {configs.length === 0 && (
+        <SectionMessage appearance="information">
+          <p>Ask a project admin to add a transport configuration in project settings before creating new requests.</p>
+        </SectionMessage>
       )}
 
       <small style={{ color: '#626f86' }}>

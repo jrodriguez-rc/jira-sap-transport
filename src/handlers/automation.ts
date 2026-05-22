@@ -37,6 +37,7 @@ export async function automationCreate(args: AutomationArgs<{
     const entry = await createTransportFromConfig({
       projectId: args.payload.projectId,
       issueKey: args.payload.issueKey,
+      project,
       config,
       emailOverride: args.payload.email,
     });

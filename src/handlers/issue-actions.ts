@@ -11,14 +11,18 @@ import type {
 
 interface ResolverArgs<P = unknown> { payload: P; context: { accountId?: string } }
 
-async function resolveConnection(projectId: string): Promise<{ conn: Connection; project: ProjectConfig }> {
-  const project = (await getProjectConfig(projectId)) as ProjectConfig | undefined;
-  if (!project) throw new ConfigError('Project not configured: no SAP connection selected');
-  if (project.connectionOverride) return { conn: project.connectionOverride, project };
+/**
+ * Resolve the Connection for an already-loaded ProjectConfig. Callers that
+ * also need the project itself already have it (they loaded it to find the
+ * matching TransportConfig), so we don't re-read it from KVS here — that
+ * avoided a 2× read on the issue.create / automation.create hot path.
+ */
+async function resolveConnection(project: ProjectConfig): Promise<Connection> {
+  if (project.connectionOverride) return project.connectionOverride;
   if (project.connectionId) {
     const c = await getConnection(project.connectionId);
     if (!c) throw new ConfigError('Referenced SAP connection does not exist');
-    return { conn: c, project };
+    return c;
   }
   throw new ConfigError('No SAP connection configured for project');
 }
@@ -62,11 +66,13 @@ function toEntry(rt: RequestType, conn: Connection): SapTransportEntry {
 export async function createTransportFromConfig(args: {
   projectId: string;
   issueKey: string;
+  project: ProjectConfig;
   config: TransportConfig;
   descriptionOverride?: string;
   emailOverride?: string;
 }): Promise<SapTransportEntry> {
-  const { conn, project } = await resolveConnection(args.projectId);
+  const { project } = args;
+  const conn = await resolveConnection(project);
   const email = args.emailOverride ?? (await fetchUserEmail());
   const issue = await fetchIssue(args.issueKey);
 
@@ -108,13 +114,14 @@ export async function createTransportResolver(args: ResolverArgs<{
 }>) {
   const started = Date.now();
   try {
-    const project = (await getProjectConfig(args.payload.projectId)) as ProjectConfig | undefined;
+    const project = await getProjectConfig(args.payload.projectId);
     if (!project) throw new ConfigError('Project not configured');
     const config = project.configs?.find((c) => c.id === args.payload.configId);
     if (!config) throw new ConfigError(`Transport configuration not found: ${args.payload.configId}`);
     const entry = await createTransportFromConfig({
       projectId: args.payload.projectId,
       issueKey: args.payload.issueKey,
+      project,
       config,
       descriptionOverride: args.payload.descriptionOverride,
       emailOverride: args.payload.emailOverride,
@@ -145,7 +152,9 @@ export async function createTransportResolver(args: ResolverArgs<{
 export async function linkTransportResolver(args: ResolverArgs<{ projectId: string; issueKey: string; requestId: string }>) {
   const started = Date.now();
   try {
-    const { conn } = await resolveConnection(args.payload.projectId);
+    const project = await getProjectConfig(args.payload.projectId);
+    if (!project) throw new ConfigError('Project not configured: no SAP connection selected');
+    const conn = await resolveConnection(project);
     const client = createSapClient(conn);
     const rt = await client.getTransport(args.payload.requestId);
     const entry = toEntry(rt, conn);
@@ -172,7 +181,9 @@ export async function linkTransportResolver(args: ResolverArgs<{ projectId: stri
 export async function releaseTransportResolver(args: ResolverArgs<{ projectId: string; issueKey: string; requestId: string }>) {
   const started = Date.now();
   try {
-    const { conn } = await resolveConnection(args.payload.projectId);
+    const project = await getProjectConfig(args.payload.projectId);
+    if (!project) throw new ConfigError('Project not configured: no SAP connection selected');
+    const conn = await resolveConnection(project);
     const client = createSapClient(conn);
     const rt = await client.releaseTransport(args.payload.requestId);
     const list = await getIssueTransports(args.payload.issueKey);
@@ -193,7 +204,9 @@ export async function releaseTransportResolver(args: ResolverArgs<{ projectId: s
 export async function refreshTransportResolver(args: ResolverArgs<{ projectId: string; issueKey: string; requestId: string }>) {
   const started = Date.now();
   try {
-    const { conn } = await resolveConnection(args.payload.projectId);
+    const project = await getProjectConfig(args.payload.projectId);
+    if (!project) throw new ConfigError('Project not configured: no SAP connection selected');
+    const conn = await resolveConnection(project);
     const client = createSapClient(conn);
     const rt = await client.getTransport(args.payload.requestId);
     const list = await getIssueTransports(args.payload.issueKey);

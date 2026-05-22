@@ -162,6 +162,38 @@ describe('project-settings App', () => {
     expect(inputs[2].value).toBe('ZPROJ');
   });
 
+  it('Edit → change a field → Save calls project.config.update with the patch', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      if (key === 'project.config.update') return ok({ ok: true });
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText('Workbench QAS');
+    const editButtons = screen.getAllByText('Edit');
+    await user.click(editButtons[0]);
+    await screen.findByText('Edit transport configuration');
+    const inputs = screen.getAllByRole('textbox') as HTMLInputElement[];
+    // Change the Target field from QAS to PRD. userEvent.clear emits the
+    // controlled-input change events the mock <input> needs to actually
+    // reset its value before retyping.
+    await user.clear(inputs[1]);
+    await user.type(inputs[1], 'PRD');
+    await user.click(screen.getByText('Save', { selector: 'button' }));
+    await waitFor(() => {
+      const updateCall = invokeMock.mock.calls.find((c) => c[0] === 'project.config.update');
+      expect(updateCall).toBeDefined();
+      expect(updateCall![1]).toEqual({
+        projectId: '10001',
+        configId: 'cfg-a',
+        patch: { label: 'Workbench QAS', type: 'K', target: 'PRD', projectCode: 'ZPROJ' },
+      });
+    });
+  });
+
   it('Delete on a row calls project.config.delete', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
