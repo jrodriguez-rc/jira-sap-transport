@@ -42,8 +42,11 @@ export interface TransportConfig {
   id: string;                  // internal uuid, never shown in UI nor in automation
   label: string;               // unique per project, shown as button text
   type: TransportType;
-  target: string;              // e.g. 'PRD', 'QAS'
-  projectCode: string;
+  target?: string;             // optional; e.g. 'PRD', 'QAS' — when absent the OData
+                               // createTransport call drops the Target field and SAP
+                               // falls back to the source system's default target route
+  projectCode?: string;        // optional; when absent the description template's
+                               // `{{project.code}}` smart-value renders empty
 }
 
 export interface ProjectConfig {
@@ -64,8 +67,10 @@ export interface ProjectConfig {
 |---|---|
 | `label` | Non-empty; ≤ 50 chars; unique within the project's `configs[]` (case-sensitive). |
 | `type` | Must be one of `K`, `W`, `T`. |
-| `target` | Non-empty. SAP target system code; we don't enforce a length or charset beyond non-empty (existing connections allow any SAP-side target). |
-| `projectCode` | Non-empty. |
+| `target` | Optional. The resolvers normalise empty/whitespace input to `undefined` before persisting. |
+| `projectCode` | Optional. Same normalisation. |
+
+> **Note on the original spec.** The first draft of this spec declared `target` and `projectCode` non-empty. The shipped implementation relaxed both to optional after PR #12 review: SAP's OData `createTransport` already accepts a missing `Target` field (the source system picks the default target route), and the template engine renders `{{project.code}}` as empty when the value is undefined. There was no downstream code that actually required either field to be present — the restriction was arbitrary. The resolvers strip the field from the persisted entry when blank, so the storage shape uses `undefined` (not `''`).
 
 Validation errors are thrown as plain `Error` instances; `bridgeSafe` converts them to `{ ok: false, error: { code, message, ... } }` for the frontend.
 
@@ -97,7 +102,7 @@ All CRUD on the `configs[]` array happens via read-modify-write on this one key.
 |---|---|---|
 | `project.getConfig` | `{ projectId }` | Returns `ProjectConfig` (normalized — see §7) or `undefined` if the project has never been saved. |
 | `project.saveSettings` | `{ projectId, settings: { connectionId?, connectionOverride?, descriptionTemplate } }` | Writes **only** the project-level fields. Preserves `configs[]` untouched. If the document does not exist, creates one with `configs: []`. |
-| `project.config.add` | `{ projectId, config: { label, type, target, projectCode } }` | Assigns `id = 'cfg-' + Date.now() + '-' + random6`, validates, appends to `configs[]`, persists, returns `{ id }`. |
+| `project.config.add` | `{ projectId, config: { label, type, target?, projectCode? } }` | Assigns `id = 'cfg-' + Date.now() + '-' + random6`, validates, normalises empty/whitespace `target`/`projectCode` to `undefined` (and omits them from the persisted entry), appends to `configs[]`, returns `{ id }`. |
 | `project.config.update` | `{ projectId, configId, patch }` | Locates by `id`, re-validates including label-uniqueness against the rest of the array, applies patch, persists. Throws `ConfigError` if `configId` not found. |
 | `project.config.delete` | `{ projectId, configId }` | Removes the matching entry. Idempotent — no error if `configId` is not present. |
 | `project.previewTemplate` | `{ template, sampleContext }` | Unchanged. |
@@ -360,7 +365,7 @@ Coverage gate stays at ≥90% on the four metrics. Current branch coverage (90.6
 
 | File | Treatment |
 |---|---|
-| `src/handlers/project-config.test.ts` | **Rewrite.** New cases per resolver: happy path, validation (label duplicated, type invalid, target/projectCode empty), normalize-on-read of a legacy document, idempotency of delete. |
+| `src/handlers/project-config.test.ts` | **Rewrite.** New cases per resolver: happy path, validation (label duplicated, label too long, type invalid), `target`/`projectCode` normalisation (empty/whitespace/undefined → persisted as `undefined`; non-empty values persist as-is; `updateConfigResolver` clears a previously-set value when the patch sends blank), normalize-on-read of a legacy document (legacy `projectCode`/`defaults` silently dropped; pathological non-string `connectionId` and non-object `connectionOverride` coerced to `undefined`), idempotency of delete, rename-self-collision allowance. |
 | `src/handlers/issue-actions.test.ts` | **Adapt.** New cases: configId not found → error, `project.code` in render context comes from the matched config (not from a project-level field). All release/refresh/link/list cases unchanged. |
 | `src/handlers/automation.test.ts` | **Adapt.** New cases: configLabel exact match (success), label not found → error message lists available labels, case-sensitivity. |
 | `src/lib/storage.test.ts` | Unchanged. |
