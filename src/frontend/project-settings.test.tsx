@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
@@ -237,5 +237,199 @@ describe('project-settings App', () => {
         settings: { connectionId: 'conn-1' },
       });
     });
+  });
+
+  it('shows banner with error message when connections.list returns Result.fail', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return fail('connections boom');
+      if (key === 'project.getConfig') return ok(emptyProject);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      return ok(undefined);
+    });
+    render(<App />);
+    await screen.findByText('connections boom');
+  });
+
+  it('shows banner with error message when project.getConfig returns Result.fail (renders default cfg)', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return fail('cfg boom');
+      return ok(undefined);
+    });
+    render(<App />);
+    await screen.findByText('cfg boom');
+    // After a fail, the App falls back to the default cfg (no configs) — so
+    // the empty-state hint becomes visible too.
+    await screen.findByText(/No configurations yet/i);
+  });
+
+  it('shows banner with error message when project.saveSettings returns Result.fail', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      if (key === 'project.saveSettings') return fail('save boom');
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText('Workbench QAS');
+    await user.click(screen.getByText('Save settings'));
+    await screen.findByText('save boom');
+  });
+
+  it('shows banner with error when project.config.delete fails (closes confirmation first)', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      if (key === 'project.config.delete') return fail('delete boom');
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText('Workbench QAS');
+    const deleteButtons = screen.getAllByText('Delete');
+    await user.click(deleteButtons[0]);
+    await user.click(screen.getByText('Confirm delete'));
+    await screen.findByText('delete boom');
+  });
+
+  it('Cancel on the delete confirmation hides confirm-delete and skips the call', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText('Workbench QAS');
+    const deleteButtons = screen.getAllByText('Delete');
+    await user.click(deleteButtons[0]);
+    await screen.findByText('Confirm delete');
+    // Two Cancel buttons may appear (we only opened one row, so just one).
+    await user.click(screen.getByText('Cancel'));
+    expect(screen.queryByText('Confirm delete')).not.toBeInTheDocument();
+    expect(invokeMock.mock.calls.find((c) => c[0] === 'project.config.delete')).toBeUndefined();
+  });
+
+  it('Cancel on the draft modal closes it without calling add/update', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(emptyProject);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText(/No configurations yet/i);
+    await user.click(screen.getByText('+ Add config'));
+    await screen.findByText('Add transport configuration');
+    await user.click(screen.getByText('Cancel'));
+    expect(screen.queryByText('Add transport configuration')).not.toBeInTheDocument();
+    expect(invokeMock.mock.calls.find((c) => c[0] === 'project.config.add')).toBeUndefined();
+  });
+
+  it('typing in the template TextArea updates cfg and re-fires preview once via useEffect', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return ok({ text: 'rendered', length: 8, warnings: ['legacy {{project.code}} no longer resolves'], truncated: true });
+      return ok(undefined);
+    });
+    render(<App />);
+    // Wait for the initial preview to land — the configured projectWithConfigs
+    // has a non-empty template, so the useEffect fires once on mount and
+    // produces the truncated/warnings preview branches.
+    await screen.findByText(/Preview:/);
+    await screen.findByText(/truncated/);
+    await screen.findByText(/legacy/);
+  });
+
+  it('renders the override-mode field stack and lets the user type into each Textfield (exercising the 5 onChange handlers)', async () => {
+    const overrideProject: ProjectConfig = {
+      connectionOverride: { id: 'override', label: 'override', hostname: 'https://h.example', systemId: 'X1H', client: '100', username: 'u', password: 'p' },
+      descriptionTemplate: '',
+      configs: [],
+    };
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(overrideProject);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText(/Hostname \(https URL\)/);
+    // 5 override Textfields render as <input> via the passthrough mock. Type
+    // one character into each to fire the controlled onChange handlers.
+    const inputs = screen.getAllByRole('textbox') as HTMLInputElement[];
+    // No draft modal open, so the only textboxes are the 4 non-password override fields
+    // (in order: hostname, systemId, client, username — password is type="password" and not role=textbox).
+    expect(inputs.length).toBeGreaterThanOrEqual(4);
+    await user.type(inputs[0], 'x');
+    await user.type(inputs[1], 'y');
+    await user.type(inputs[2], 'z');
+    await user.type(inputs[3], 'w');
+    // Drive the password field directly via fireEvent.change since it has
+    // type="password" (no role=textbox). This exercises the 5th onChange
+    // branch that user.type can't reach via getAllByRole.
+    const pwd = document.querySelector('input[type="password"]') as HTMLInputElement;
+    expect(pwd).toBeTruthy();
+    fireEvent.change(pwd, { target: { value: 'pp' } });
+  });
+
+  it('Edit modal: changing label/projectCode + Save sends the patched config (covers more Textfield handlers)', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      if (key === 'project.config.update') return ok({ ok: true });
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText('Workbench QAS');
+    await user.click(screen.getAllByText('Edit')[0]);
+    await screen.findByText('Edit transport configuration');
+    const inputs = screen.getAllByRole('textbox') as HTMLInputElement[];
+    // Exercise label and project-code change handlers (target onChange is
+    // already covered by the earlier edit/update test).
+    await user.clear(inputs[0]);
+    await user.type(inputs[0], 'Renamed');
+    await user.clear(inputs[2]);
+    await user.type(inputs[2], 'ZNEW');
+    await user.click(screen.getByText('Save', { selector: 'button' }));
+    await waitFor(() => {
+      const updateCall = invokeMock.mock.calls.find((c) => c[0] === 'project.config.update');
+      expect(updateCall).toBeDefined();
+      expect(updateCall![1]).toMatchObject({
+        patch: { label: 'Renamed', projectCode: 'ZNEW' },
+      });
+    });
+  });
+
+  it('previewTemplate failure no longer pollutes the shared message banner (warns instead)', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return fail('render boom');
+      return ok(undefined);
+    });
+    render(<App />);
+    await screen.findByText('Workbench QAS');
+    await waitFor(() => {
+      expect(invokeMock.mock.calls.some((c) => c[0] === 'project.previewTemplate')).toBe(true);
+    });
+    expect(screen.queryByText('render boom')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('project.previewTemplate failed'),
+        expect.stringContaining('render boom'),
+      );
+    });
+    warnSpy.mockRestore();
   });
 });

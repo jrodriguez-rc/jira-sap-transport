@@ -455,6 +455,15 @@ describe('issue-panel App (Custom UI)', () => {
     await screen.findByText('link crash');
   });
 
+  it('shows an error banner when the mount IIFE throws synchronously (issue.list rejects)', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'issue.list') throw new Error('issue.list bridge crash');
+      return ok(undefined);
+    });
+    render(<App />);
+    await screen.findByText('issue.list bridge crash');
+  });
+
   it('renders no rows when issue.list returns an empty list', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'issue.list') return ok([]);
