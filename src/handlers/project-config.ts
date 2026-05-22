@@ -44,7 +44,7 @@ function newConfigId(): string {
 
 function validateConfigFields(
   fields: { label?: string; type?: TransportType; target?: string; projectCode?: string },
-): asserts fields is { label: string; type: TransportType; target: string; projectCode: string } {
+): asserts fields is { label: string; type: TransportType; target?: string; projectCode?: string } {
   if (!fields.label || fields.label.trim().length === 0) {
     throw new ConfigError('label is required');
   }
@@ -54,12 +54,11 @@ function validateConfigFields(
   if (!fields.type || !VALID_TYPES.includes(fields.type)) {
     throw new ConfigError('type must be one of K/W/T');
   }
-  if (!fields.target || fields.target.trim().length === 0) {
-    throw new ConfigError('target is required');
-  }
-  if (!fields.projectCode || fields.projectCode.trim().length === 0) {
-    throw new ConfigError('projectCode is required');
-  }
+  // target and projectCode are intentionally optional. When omitted:
+  //  - target: the OData createTransport call drops the Target field and SAP
+  //    falls back to the system's default target route.
+  //  - projectCode: `{{project.code}}` in the description template renders
+  //    empty (the template engine treats undefined as '').
 }
 
 function assertLabelUnique(configs: TransportConfig[], label: string, excludeId?: string): void {
@@ -100,18 +99,22 @@ export async function saveSettingsResolver(
 export async function addConfigResolver(
   args: ResolverArgs<{
     projectId: string;
-    config: { label: string; type: TransportType; target: string; projectCode: string };
+    config: { label: string; type: TransportType; target?: string; projectCode?: string };
   }>,
 ): Promise<{ id: string }> {
   validateConfigFields(args.payload.config);
   const existing = await loadOrEmpty(args.payload.projectId);
   assertLabelUnique(existing.configs, args.payload.config.label);
+  // Normalise empty/whitespace strings to undefined so a blank input from the
+  // UI doesn't get persisted as '' (the storage shape uses undefined).
+  const target = args.payload.config.target?.trim();
+  const projectCode = args.payload.config.projectCode?.trim();
   const entry: TransportConfig = {
     id: newConfigId(),
     label: args.payload.config.label,
     type: args.payload.config.type,
-    target: args.payload.config.target,
-    projectCode: args.payload.config.projectCode,
+    ...(target ? { target } : {}),
+    ...(projectCode ? { projectCode } : {}),
   };
   const next: ProjectConfig = { ...existing, configs: [...existing.configs, entry] };
   await saveProjectConfig(args.payload.projectId, next);
@@ -122,7 +125,7 @@ export async function updateConfigResolver(
   args: ResolverArgs<{
     projectId: string;
     configId: string;
-    patch: Partial<{ label: string; type: TransportType; target: string; projectCode: string }>;
+    patch: Partial<{ label: string; type: TransportType; target?: string; projectCode?: string }>;
   }>,
 ): Promise<{ ok: true }> {
   const existing = await loadOrEmpty(args.payload.projectId);
@@ -130,7 +133,19 @@ export async function updateConfigResolver(
   if (idx === -1) {
     throw new ConfigError(`Config not found: ${args.payload.configId}`);
   }
-  const merged: TransportConfig = { ...existing.configs[idx], ...args.payload.patch };
+  // Normalise empty/whitespace target/projectCode in the patch to undefined
+  // so clearing the field in the UI removes the value rather than persisting
+  // an empty string.
+  const patch = { ...args.payload.patch };
+  if (Object.prototype.hasOwnProperty.call(patch, 'target')) {
+    const t = patch.target?.trim();
+    patch.target = t && t.length > 0 ? t : undefined;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'projectCode')) {
+    const p = patch.projectCode?.trim();
+    patch.projectCode = p && p.length > 0 ? p : undefined;
+  }
+  const merged: TransportConfig = { ...existing.configs[idx], ...patch };
   validateConfigFields(merged);
   assertLabelUnique(existing.configs, merged.label, merged.id);
   const nextConfigs = [...existing.configs];

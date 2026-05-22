@@ -133,7 +133,16 @@ export const App: React.FC = () => {
   };
 
   const openEdit = (c: TransportConfig): void => {
-    setDraft({ id: c.id, label: c.label, type: c.type, target: c.target, projectCode: c.projectCode });
+    // Coerce undefined to '' so the controlled <input> stays controlled —
+    // target and projectCode are optional in storage but the input is always
+    // a string.
+    setDraft({
+      id: c.id,
+      label: c.label,
+      type: c.type,
+      target: c.target ?? '',
+      projectCode: c.projectCode ?? '',
+    });
     setDraftError('');
   };
 

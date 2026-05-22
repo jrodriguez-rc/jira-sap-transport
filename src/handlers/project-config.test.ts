@@ -72,6 +72,20 @@ describe('getProjectConfigResolver', () => {
     expect((r as unknown as Record<string, unknown>).defaults).toBeUndefined();
   });
 
+  it('drops non-string connectionId and non-object connectionOverride when normalising', async () => {
+    // Pathological legacy doc: connectionId is a number, connectionOverride is a string.
+    // Both should be dropped to undefined by normalizeProjectConfig.
+    vi.mocked(getProjectConfig).mockResolvedValue({
+      connectionId: 42,
+      connectionOverride: 'not-an-object',
+      descriptionTemplate: 'x',
+      configs: [],
+    } as unknown as ProjectConfig);
+    const r = await getProjectConfigResolver({ payload: { projectId: '10001' }, ...ctx });
+    expect(r?.connectionId).toBeUndefined();
+    expect(r?.connectionOverride).toBeUndefined();
+  });
+
   it('coerces a missing descriptionTemplate to empty string', async () => {
     vi.mocked(getProjectConfig).mockResolvedValue({ connectionId: 'conn-1' } as unknown as ProjectConfig);
     const r = await getProjectConfigResolver({ payload: { projectId: '10001' }, ...ctx });
@@ -186,16 +200,49 @@ describe('addConfigResolver', () => {
     ).rejects.toThrow(/50/);
   });
 
-  it.each(['', '  '])('rejects empty/whitespace target=%j', async (target) => {
+  it.each(['', '  ', undefined])(
+    'accepts empty/whitespace/missing target=%j and stores it as undefined',
+    async (target) => {
+      vi.mocked(getProjectConfig).mockResolvedValue({
+        connectionId: 'conn-1', descriptionTemplate: '', configs: [],
+      });
+      const r = await addConfigResolver({
+        payload: { projectId: '10001', config: { label: 'L', type: 'K', target, projectCode: 'Z' } },
+        ...ctx,
+      });
+      expect(r.id).toMatch(/^cfg-/);
+      const persisted = vi.mocked(saveProjectConfig).mock.calls[0][1] as ProjectConfig;
+      expect(persisted.configs[0].target).toBeUndefined();
+    },
+  );
+
+  it.each(['', '  ', undefined])(
+    'accepts empty/whitespace/missing projectCode=%j and stores it as undefined',
+    async (projectCode) => {
+      vi.mocked(getProjectConfig).mockResolvedValue({
+        connectionId: 'conn-1', descriptionTemplate: '', configs: [],
+      });
+      const r = await addConfigResolver({
+        payload: { projectId: '10001', config: { label: 'L', type: 'K', target: 'QAS', projectCode } },
+        ...ctx,
+      });
+      expect(r.id).toMatch(/^cfg-/);
+      const persisted = vi.mocked(saveProjectConfig).mock.calls[0][1] as ProjectConfig;
+      expect(persisted.configs[0].projectCode).toBeUndefined();
+    },
+  );
+
+  it('persists both target and projectCode when supplied', async () => {
     vi.mocked(getProjectConfig).mockResolvedValue({
       connectionId: 'conn-1', descriptionTemplate: '', configs: [],
     });
-    await expect(
-      addConfigResolver({
-        payload: { projectId: '10001', config: { label: 'L', type: 'K', target, projectCode: 'Z' } },
-        ...ctx,
-      }),
-    ).rejects.toThrow(/target/i);
+    await addConfigResolver({
+      payload: { projectId: '10001', config: { label: 'L', type: 'K', target: 'QAS', projectCode: 'ZPROJ' } },
+      ...ctx,
+    });
+    const persisted = vi.mocked(saveProjectConfig).mock.calls[0][1] as ProjectConfig;
+    expect(persisted.configs[0].target).toBe('QAS');
+    expect(persisted.configs[0].projectCode).toBe('ZPROJ');
   });
 
   it('rejects an invalid type', async () => {
@@ -228,6 +275,67 @@ describe('updateConfigResolver', () => {
     const persisted = vi.mocked(saveProjectConfig).mock.calls[0][1] as ProjectConfig;
     expect(persisted.configs[0].target).toBe('PRD');
     expect(persisted.configs[0].label).toBe('A'); // untouched
+  });
+
+  it.each(['', '   '])(
+    'clears target to undefined when the patch sends empty/whitespace=%j',
+    async (target) => {
+      vi.mocked(getProjectConfig).mockResolvedValue({
+        connectionId: 'conn-1',
+        descriptionTemplate: '',
+        configs: [sampleConfig({ id: 'cfg-a', target: 'QAS' })],
+      });
+      await updateConfigResolver({
+        payload: { projectId: '10001', configId: 'cfg-a', patch: { target } },
+        ...ctx,
+      });
+      const persisted = vi.mocked(saveProjectConfig).mock.calls[0][1] as ProjectConfig;
+      expect(persisted.configs[0].target).toBeUndefined();
+    },
+  );
+
+  it('replaces projectCode with a new non-empty value supplied in the patch', async () => {
+    vi.mocked(getProjectConfig).mockResolvedValue({
+      connectionId: 'conn-1',
+      descriptionTemplate: '',
+      configs: [sampleConfig({ id: 'cfg-a', projectCode: 'ZOLD' })],
+    });
+    await updateConfigResolver({
+      payload: { projectId: '10001', configId: 'cfg-a', patch: { projectCode: 'ZNEW' } },
+      ...ctx,
+    });
+    const persisted = vi.mocked(saveProjectConfig).mock.calls[0][1] as ProjectConfig;
+    expect(persisted.configs[0].projectCode).toBe('ZNEW');
+  });
+
+  it('clears projectCode to undefined when the patch sends an empty string', async () => {
+    vi.mocked(getProjectConfig).mockResolvedValue({
+      connectionId: 'conn-1',
+      descriptionTemplate: '',
+      configs: [sampleConfig({ id: 'cfg-a', projectCode: 'ZPROJ' })],
+    });
+    await updateConfigResolver({
+      payload: { projectId: '10001', configId: 'cfg-a', patch: { projectCode: '' } },
+      ...ctx,
+    });
+    const persisted = vi.mocked(saveProjectConfig).mock.calls[0][1] as ProjectConfig;
+    expect(persisted.configs[0].projectCode).toBeUndefined();
+  });
+
+  it('leaves target/projectCode untouched when the patch does not include them', async () => {
+    vi.mocked(getProjectConfig).mockResolvedValue({
+      connectionId: 'conn-1',
+      descriptionTemplate: '',
+      configs: [sampleConfig({ id: 'cfg-a', target: 'QAS', projectCode: 'ZPROJ' })],
+    });
+    await updateConfigResolver({
+      payload: { projectId: '10001', configId: 'cfg-a', patch: { label: 'A2' } },
+      ...ctx,
+    });
+    const persisted = vi.mocked(saveProjectConfig).mock.calls[0][1] as ProjectConfig;
+    expect(persisted.configs[0].target).toBe('QAS');
+    expect(persisted.configs[0].projectCode).toBe('ZPROJ');
+    expect(persisted.configs[0].label).toBe('A2');
   });
 
   it('throws when configId not found', async () => {

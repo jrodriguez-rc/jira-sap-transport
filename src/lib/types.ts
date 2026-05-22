@@ -21,8 +21,13 @@ export interface TransportConfig {
   id: string;                  // internal uuid; never shown in UI, never exposed in automation API
   label: string;               // unique per project; shown as the button text in the issue panel
   type: TransportType;
-  target: string;              // e.g. 'PRD', 'QAS'
-  projectCode: string;
+  // Optional. When absent, SAP picks the default target route for the
+  // transport's source system; the OData createTransport call omits the
+  // Target field entirely.
+  target?: string;             // e.g. 'PRD', 'QAS'
+  // Optional. When absent, the description template's `{{project.code}}`
+  // smart-value renders empty (the template engine treats undefined as '').
+  projectCode?: string;
 }
 
 export interface ProjectConfig {
