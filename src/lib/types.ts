@@ -17,15 +17,19 @@ export interface Connection {
 
 export type ConnectionPublic = Omit<Connection, 'password'>;
 
-export interface ProjectConfig {
-  connectionId?: string;                  // reference to catalog
-  connectionOverride?: Connection;        // wins over catalog
+export interface TransportConfig {
+  id: string;                  // internal uuid; never shown in UI, never exposed in automation API
+  label: string;               // unique per project; shown as the button text in the issue panel
+  type: TransportType;
+  target: string;              // e.g. 'PRD', 'QAS'
   projectCode: string;
+}
+
+export interface ProjectConfig {
+  connectionId?: string;
+  connectionOverride?: Connection;
   descriptionTemplate: string;
-  defaults: {
-    type: TransportType;
-    target?: string;
-  };
+  configs: TransportConfig[];
 }
 
 export interface RequestType {

@@ -73,7 +73,13 @@ vi.mock('../lib/sap-client', () => ({
 
 import { automationCreate, automationRelease, automationLink } from './automation';
 
-const cfg: ProjectConfig = { connectionId: 'c1', projectCode: 'P', descriptionTemplate: '', defaults: { type: 'K' } };
+const cfg: ProjectConfig = {
+  connectionId: 'c1',
+  descriptionTemplate: '',
+  configs: [
+    { id: 'cfg-a', label: 'Workbench QAS', type: 'K', target: 'QAS', projectCode: 'P' }
+  ]
+};
 
 beforeEach(() => {
   appStore.clear();
@@ -85,19 +91,60 @@ beforeEach(() => {
 
 describe('automationCreate', () => {
   it('creates and outputs flat action outputs', async () => {
-    const r = await automationCreate({ payload: { projectId: '10001', issueKey: 'PROJ-1', email: 'a@b.com', type: 'K' }, context: { accountId: 'acc' } });
+    const r = await automationCreate({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', email: 'a@b.com', configLabel: 'Workbench QAS' },
+      context: { accountId: 'acc' }
+    });
     expect(r.requestId).toBe('DEVK900123');
     expect(r.error).toBe('');
   });
 
   it('forwards the email input to createTransport', async () => {
     const r = await automationCreate({
-      payload: { projectId: '10001', issueKey: 'PROJ-1', email: 'auto@b.com', type: 'K' },
+      payload: { projectId: '10001', issueKey: 'PROJ-1', email: 'auto@b.com', configLabel: 'Workbench QAS' },
       context: { accountId: 'acc' }
     });
     expect(r.requestId).toBe('DEVK900123');
     expect(createTransportCalls.length).toBeGreaterThan(0);
     expect(createTransportCalls[createTransportCalls.length - 1].email).toBe('auto@b.com');
+  });
+
+  it('matches configLabel exactly (case-sensitive happy path), passing type/target from the matched config', async () => {
+    const r = await automationCreate({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', email: 'a@b.com', configLabel: 'Workbench QAS' },
+      context: { accountId: 'acc' }
+    });
+    expect(r.requestId).toBe('DEVK900123');
+    const call = createTransportCalls[createTransportCalls.length - 1];
+    expect(call.type).toBe('K');
+    expect(call.target).toBe('QAS');
+  });
+
+  it('returns an error message listing available labels when configLabel does not match', async () => {
+    appStore.set('project:10001:config', {
+      connectionId: 'c1',
+      descriptionTemplate: '',
+      configs: [
+        { id: 'cfg-a', label: 'A', type: 'K', target: 'QAS', projectCode: 'P' },
+        { id: 'cfg-b', label: 'B', type: 'W', target: 'PRD', projectCode: 'P' }
+      ]
+    });
+    const r = await automationCreate({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', email: 'a@b.com', configLabel: 'Workbench QAS' },
+      context: { accountId: 'acc' }
+    });
+    expect(r.requestId).toBe('');
+    expect(r.error).toContain('"A"');
+    expect(r.error).toContain('"B"');
+  });
+
+  it('label matching is case-sensitive', async () => {
+    const r = await automationCreate({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', email: 'a@b.com', configLabel: 'workbench qas' },
+      context: { accountId: 'acc' }
+    });
+    expect(r.requestId).toBe('');
+    expect(r.error).toMatch(/No transport configuration/i);
   });
 });
 
@@ -177,7 +224,7 @@ describe('automationRelease', () => {
 describe('automationCreate / automationLink error paths', () => {
   it('automationCreate returns error string when resolver throws', async () => {
     appStore.delete('project:10001:config');
-    const r = await automationCreate({ payload: { projectId: '10001', issueKey: 'PROJ-1', email: 'a@b.com', type: 'K' }, context: { accountId: 'acc' } });
+    const r = await automationCreate({ payload: { projectId: '10001', issueKey: 'PROJ-1', email: 'a@b.com', configLabel: 'Workbench QAS' }, context: { accountId: 'acc' } });
     expect(r.requestId).toBe('');
     expect(r.error).toMatch(/configur/i);
   });
@@ -195,7 +242,7 @@ import { automationCreateHandler, automationReleaseHandler, automationLinkHandle
 describe('automation function-module handlers (index exports)', () => {
   it('automationCreateHandler accepts (payload, context) directly', async () => {
     const r = await automationCreateHandler(
-      { projectId: '10001', issueKey: 'PROJ-1', email: 'a@b.com', type: 'K' },
+      { projectId: '10001', issueKey: 'PROJ-1', email: 'a@b.com', configLabel: 'Workbench QAS' },
       { accountId: 'acc' }
     );
     expect(r.requestId).toBeTruthy();
