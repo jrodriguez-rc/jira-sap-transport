@@ -244,6 +244,46 @@ describe('issue-panel App (Custom UI)', () => {
     expect(invokeMock.mock.calls.find((c) => c[0] === 'issue.create')).toBeUndefined();
   });
 
+  it('shows the error message when issue.create returns Result.fail', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'issue.list') return ok([]);
+      if (key === 'project.getConfig')
+        return ok({
+          connectionId: 'conn-1',
+          descriptionTemplate: '',
+          configs: [{ id: 'cfg-a', label: 'Workbench QAS', type: 'K', target: 'QAS', projectCode: 'ZPROJ' }],
+        });
+      if (key === 'issue.create') return fail('cannot create');
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: '+ Workbench QAS' }));
+    await screen.findByText('Create Workbench QAS');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+    await screen.findByText('cannot create');
+  });
+
+  it('shows the error message when issue.create throws synchronously', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'issue.list') return ok([]);
+      if (key === 'project.getConfig')
+        return ok({
+          connectionId: 'conn-1',
+          descriptionTemplate: '',
+          configs: [{ id: 'cfg-a', label: 'Workbench QAS', type: 'K', target: 'QAS', projectCode: 'ZPROJ' }],
+        });
+      if (key === 'issue.create') throw new Error('create crash');
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: '+ Workbench QAS' }));
+    await screen.findByText('Create Workbench QAS');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+    await screen.findByText('create crash');
+  });
+
   it('clicking Release on a non-released row calls issue.release', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'issue.list') return ok(entries);
