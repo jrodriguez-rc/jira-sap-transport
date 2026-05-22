@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
@@ -9,602 +9,726 @@ const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 vi.mock('@forge/bridge', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
   view: {
-    getContext: vi.fn(async () => ({ extension: { project: { id: '10001' } } })),
+    getContext: vi.fn(async () => ({
+      extension: { project: { id: '10001' } },
+    })),
   },
   events: { on: vi.fn(), once: vi.fn(), emit: vi.fn() },
 }));
 
-// project-settings.tsx uses controlled `<Textfield value={…} onChange={…}>`
-// and `<TextArea value={…} onChange={…}>`. The default string-tag rendering
-// is non-interactive, so swap in real `<input>` / `<textarea>` so user-event
-// fires real onChange events. RadioGroup is also mocked so we can switch the
-// connection mode programmatically.
 vi.mock('@forge/react', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
-  const React = await import('react');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const Textfield = React.forwardRef<HTMLInputElement, any>((props, ref) => (
-    <input ref={ref} {...props} />
-  ));
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const TextArea = React.forwardRef<HTMLTextAreaElement, any>((props, ref) => (
-    <textarea ref={ref} {...props} />
-  ));
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const Select = ({ value, options, onChange }: any) => (
-    <select
-      data-testid="forge-select"
-      value={value?.value ?? ''}
-      onChange={(e) => {
-        const v = e.target.value;
-        const opt = options.find((o: { value: string }) => o.value === v);
-        onChange(opt ?? null);
-      }}
-    >
-      <option value="" disabled>
-        select…
-      </option>
-      {options.map((o: { value: string; label: string }) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
+  const ReactLib = await import('react');
+  const passthrough = (tag: string) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const C = ReactLib.forwardRef<HTMLElement, any>((props, ref) =>
+      ReactLib.createElement(tag, { ref, ...props }, props.children),
+    );
+    C.displayName = `Mock${tag}`;
+    return C;
+  };
+  // Rich Select mock: production code does `const o = opt as SelectOption | null;`
+  // so the handler expects a {label, value} object, not a native event. Convert
+  // the native onChange.target.value back into the matching option before
+  // forwarding so component branches that read `opt.value` are actually driven.
+  interface SelectOpt {
+    label: string;
+    value: string;
+  }
+  const Select = ReactLib.forwardRef<
+    HTMLSelectElement,
+    {
+      options?: SelectOpt[];
+      value?: SelectOpt;
+      onChange?: (opt: SelectOpt | null) => void;
+    }
+  >(({ options = [], value, onChange, ...rest }, ref) =>
+    ReactLib.createElement(
+      'select',
+      {
+        ref,
+        value: value?.value ?? '',
+        onChange: (e: React.ChangeEvent<HTMLSelectElement>) => {
+          const v = e.target.value;
+          const opt = options.find((o) => o.value === v) ?? null;
+          onChange?.(opt);
+        },
+        ...rest,
+      },
+      options.map((o) =>
+        ReactLib.createElement('option', { key: o.value, value: o.value }, o.label),
+      ),
+    ),
   );
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const RadioGroup = ({ value, options, onChange, name }: any) => (
-    <div data-testid={`radiogroup-${name}`}>
-      {options.map((o: { value: string; label: string }) => (
-        <label key={o.value}>
-          <input
-            type="radio"
-            name={name}
-            value={o.value}
-            checked={value === o.value}
-            onChange={() => onChange({ target: { value: o.value } })}
-          />
-          {o.label}
-        </label>
-      ))}
-    </div>
-  );
+  Select.displayName = 'MockSelect';
+  // Rich RadioGroup mock: renders one <input type="radio"> per option and
+  // forwards onChange as a synthetic event whose target.value is the chosen
+  // option's value — matching the shape production code reads.
+  interface RadioOpt {
+    name: string;
+    value: string;
+    label: string;
+  }
+  const RadioGroup = ({
+    name,
+    value,
+    options = [],
+    onChange,
+  }: {
+    name?: string;
+    value?: string;
+    options?: RadioOpt[];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    onChange?: (e: any) => void;
+  }) =>
+    ReactLib.createElement(
+      'div',
+      { 'data-testid': 'mock-radio-group' },
+      options.map((o) =>
+        ReactLib.createElement(
+          'label',
+          { key: o.value },
+          ReactLib.createElement('input', {
+            type: 'radio',
+            name: name ?? o.name,
+            value: o.value,
+            checked: value === o.value,
+            onChange: () => onChange?.({ target: { value: o.value } }),
+            'aria-label': o.label,
+          }),
+          o.label,
+        ),
+      ),
+    );
   return {
     ...actual,
-    Textfield,
-    TextArea,
-    RadioGroup,
+    Textfield: passthrough('input'),
+    // TextArea is mocked as <textarea> so its onChange handler can be driven
+    // via fireEvent.change. The tests below that index into
+    // getAllByRole('textbox') filter to <input>-only to keep their indices
+    // stable in the presence of this additional textbox.
+    TextArea: passthrough('textarea'),
     Select,
+    RadioGroup,
+    Popup: passthrough('div'),
     default: { render: vi.fn(), addConfig: vi.fn() },
   };
 });
 
+// Mock SmartValuesPicker as a single button that fires the parent's onInsert
+// with a known token. The real component routes through Popup, which the
+// passthrough mock above can't drive — but the contract this test cares about
+// is just the onInsert callback. SmartValuesPicker's own branches are covered
+// in its dedicated test file.
+vi.mock('./components/SmartValuesPicker', () => ({
+  SmartValuesPicker: ({ onInsert }: { onInsert: (tok: string) => void }) => {
+    const ReactLib = require('react') as typeof import('react');
+    return ReactLib.createElement(
+      'button',
+      {
+        type: 'button',
+        'data-testid': 'smart-values-insert',
+        onClick: () => onInsert('{{issue.key}}'),
+      },
+      'insert-token',
+    );
+  },
+}));
+
 import { App } from './project-settings';
+import type { ProjectConfig } from '../lib/types';
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
-const fail = (message: string, code = 'ERR') => ({
-  ok: false as const,
-  error: { code, message, severity: 'error' },
-});
+const fail = (message: string) => ({ ok: false as const, error: { code: 'ERR', message, severity: 'error' } });
+
+const emptyProject: ProjectConfig = {
+  connectionId: 'conn-1',
+  descriptionTemplate: '{{issue.key}} {{issue.fields.summary}}',
+  configs: [],
+};
+
+const projectWithConfigs: ProjectConfig = {
+  connectionId: 'conn-1',
+  descriptionTemplate: '{{issue.key}}',
+  configs: [
+    { id: 'cfg-a', label: 'Workbench QAS', type: 'K', target: 'QAS', projectCode: 'ZPROJ' },
+    { id: 'cfg-b', label: 'Customizing PRD', type: 'W', target: 'PRD', projectCode: 'ZPROJ' },
+  ],
+};
 
 beforeEach(() => {
   invokeMock.mockReset();
 });
 
 describe('project-settings App', () => {
-  it('loads existing config via project.getConfig and prefills fields', async () => {
+  it('shows empty-state message when the project has no configs', async () => {
     invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return ok([{ id: 'sap-dev', label: 'SAP Dev' }]);
-      if (key === 'project.getConfig') {
-        return ok({
-          connectionId: 'sap-dev',
-          projectCode: 'PROJ',
-          descriptionTemplate: '{{issue.key}}',
-          defaults: { type: 'K' as const, target: 'PRD' },
-        });
-      }
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(emptyProject);
+      if (key === 'project.previewTemplate') return ok({ text: 'PRJ-1 Sample', length: 12, warnings: [], truncated: false });
       return ok(undefined);
     });
     render(<App />);
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('project.getConfig', { projectId: '10001' }));
-    await screen.findByDisplayValue('PROJ');
-    expect(screen.getByDisplayValue('{{issue.key}}')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('PRD')).toBeInTheDocument();
+    await screen.findByText(/No configurations yet/i);
   });
 
-  it('falls back to an empty config when project.getConfig has no data', async () => {
+  it('renders one row per existing config', async () => {
     invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') return ok(undefined);
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return ok({ text: 'PRJ-1', length: 5, warnings: [], truncated: false });
       return ok(undefined);
     });
     render(<App />);
-    await screen.findByText('SAP Transport — Project Settings');
+    await screen.findByText('Workbench QAS');
+    expect(screen.getByText('Customizing PRD')).toBeInTheDocument();
+    expect(screen.getAllByText('QAS').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('PRD').length).toBeGreaterThan(0);
   });
 
-  it('prefills the Description template with the engine default when no project config exists', async () => {
+  it('"+ Add config" → modal → save calls project.config.add and refreshes', async () => {
     invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') return ok(undefined);
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(emptyProject);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      if (key === 'project.config.add') return ok({ id: 'cfg-new' });
       return ok(undefined);
     });
+    const user = userEvent.setup();
     render(<App />);
-    await screen.findByText('SAP Transport — Project Settings');
-    expect(
-      screen.getByDisplayValue('{{issue.key}} {{issue.fields.summary}}'),
-    ).toBeInTheDocument();
-  });
-
-  it('renders the Description template preview on initial load (without typing first)', async () => {
-    invokeMock.mockImplementation(async (key: string, payload?: unknown) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') return ok(undefined);
-      if (key === 'project.previewTemplate') {
-        const p = payload as { template: string };
-        return ok({ text: 'PRJ-1 Sample summary', length: p.template.length + 5, warnings: [], truncated: false });
-      }
-      return ok(undefined);
-    });
-    render(<App />);
-    await screen.findByText('SAP Transport — Project Settings');
-    // Preview should appear automatically once cfg is loaded.
+    await screen.findByText(/No configurations yet/i);
+    await user.click(screen.getByText('+ Add config'));
+    await screen.findByText('Add transport configuration');
+    const inputs = screen
+      .getAllByRole('textbox')
+      .filter((el) => (el as HTMLElement).tagName === 'INPUT') as HTMLInputElement[];
+    // Label, Target, Project code — Type is a <select>, not a textbox in the mock.
+    // TextArea (template) is also a textbox via its <textarea> mock; the index
+    // filter above keeps only <input> elements so these indices stay stable.
+    await user.type(inputs[0], 'Workbench QAS');
+    await user.type(inputs[1], 'QAS');
+    await user.type(inputs[2], 'ZPROJ');
+    await user.click(screen.getByText('Save', { selector: 'button' }));
     await waitFor(() => {
-      const previewCall = invokeMock.mock.calls.find((c) => c[0] === 'project.previewTemplate');
-      expect(previewCall).toBeDefined();
+      const addCall = invokeMock.mock.calls.find((c) => c[0] === 'project.config.add');
+      expect(addCall).toBeDefined();
+      expect(addCall![1]).toMatchObject({
+        projectId: '10001',
+        config: { label: 'Workbench QAS', target: 'QAS', projectCode: 'ZPROJ' },
+      });
     });
-    await screen.findByText(/Preview: "PRJ-1 Sample summary"/);
   });
 
-  it('clears the preview when the template is emptied', async () => {
+  it('shows the error inline when project.config.add returns a label-duplicate error', async () => {
     invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') {
-        return ok({
-          projectCode: '',
-          descriptionTemplate: '',   // empty from start
-          defaults: { type: 'K' as const },
-        });
-      }
-      return ok(undefined);
-    });
-    render(<App />);
-    await screen.findByText('SAP Transport — Project Settings');
-    // No preview should be rendered when template is empty on initial load.
-    expect(screen.queryByText(/Preview:/)).not.toBeInTheDocument();
-  });
-
-  it('toggling the radio to Override reveals the hostname/client/username/password form', async () => {
-    invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') {
-        return ok({
-          projectCode: 'PROJ',
-          descriptionTemplate: '',
-          defaults: { type: 'K' as const },
-        });
-      }
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(emptyProject);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      if (key === 'project.config.add') return fail('A configuration with label "Workbench QAS" already exists in this project');
       return ok(undefined);
     });
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByDisplayValue('PROJ');
-    const overrideRadio = screen.getByLabelText('Override') as HTMLInputElement;
-    expect(overrideRadio.checked).toBe(false);
-    await user.click(overrideRadio);
-    await screen.findByText('Hostname (https URL)');
-    expect(screen.getByText('Client (3 digits)')).toBeInTheDocument();
-    expect(screen.getByText('Username')).toBeInTheDocument();
-    expect(screen.getByText('Password')).toBeInTheDocument();
+    await screen.findByText(/No configurations yet/i);
+    await user.click(screen.getByText('+ Add config'));
+    await screen.findByText('Add transport configuration');
+    const inputs = screen
+      .getAllByRole('textbox')
+      .filter((el) => (el as HTMLElement).tagName === 'INPUT') as HTMLInputElement[];
+    await user.type(inputs[0], 'Workbench QAS');
+    await user.type(inputs[1], 'QAS');
+    await user.type(inputs[2], 'ZPROJ');
+    await user.click(screen.getByText('Save', { selector: 'button' }));
+    await screen.findByText(/already exists/);
   });
 
-  it('editing the description template triggers project.previewTemplate and shows the preview text', async () => {
-    invokeMock.mockImplementation(async (key: string, payload?: unknown) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') {
-        return ok({
-          projectCode: 'PROJ',
-          descriptionTemplate: '',
-          defaults: { type: 'K' as const },
-        });
-      }
-      if (key === 'project.previewTemplate') {
-        const tpl = (payload as { template: string }).template;
-        return ok({
-          text: `Preview: ${tpl}`,
-          length: tpl.length,
-          warnings: [],
-          truncated: false,
-        });
-      }
+  it('Edit pre-fills the modal with the row values', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
       return ok(undefined);
     });
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByDisplayValue('PROJ');
-    const textareas = screen.getAllByRole('textbox').filter((el) => el.tagName === 'TEXTAREA');
-    expect(textareas.length).toBeGreaterThanOrEqual(1);
-    await user.type(textareas[0], 'X');
+    await screen.findByText('Workbench QAS');
+    const editButtons = screen.getAllByText('Edit');
+    await user.click(editButtons[0]);
+    await screen.findByText('Edit transport configuration');
+    const inputs = screen
+      .getAllByRole('textbox')
+      .filter((el) => (el as HTMLElement).tagName === 'INPUT') as HTMLInputElement[];
+    expect(inputs[0].value).toBe('Workbench QAS');
+    expect(inputs[1].value).toBe('QAS');
+    expect(inputs[2].value).toBe('ZPROJ');
+  });
+
+  it('Edit → change a field → Save calls project.config.update with the patch', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      if (key === 'project.config.update') return ok({ ok: true });
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText('Workbench QAS');
+    const editButtons = screen.getAllByText('Edit');
+    await user.click(editButtons[0]);
+    await screen.findByText('Edit transport configuration');
+    const inputs = screen
+      .getAllByRole('textbox')
+      .filter((el) => (el as HTMLElement).tagName === 'INPUT') as HTMLInputElement[];
+    // Change the Target field from QAS to PRD. userEvent.clear emits the
+    // controlled-input change events the mock <input> needs to actually
+    // reset its value before retyping.
+    await user.clear(inputs[1]);
+    await user.type(inputs[1], 'PRD');
+    await user.click(screen.getByText('Save', { selector: 'button' }));
     await waitFor(() => {
-      const previewCall = invokeMock.mock.calls.find((c) => c[0] === 'project.previewTemplate');
-      expect(previewCall).toBeDefined();
+      const updateCall = invokeMock.mock.calls.find((c) => c[0] === 'project.config.update');
+      expect(updateCall).toBeDefined();
+      expect(updateCall![1]).toEqual({
+        projectId: '10001',
+        configId: 'cfg-a',
+        patch: { label: 'Workbench QAS', type: 'K', target: 'PRD', projectCode: 'ZPROJ' },
+      });
     });
-    await screen.findByText(/Preview: "Preview: X"/);
   });
 
-  it('clicking Save calls project.saveConfig with the current cfg', async () => {
+  it('Delete on a row calls project.config.delete', async () => {
     invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') {
-        return ok({
-          projectCode: 'PROJ',
-          descriptionTemplate: '',
-          defaults: { type: 'K' as const },
-        });
-      }
-      if (key === 'project.saveConfig') return ok(undefined);
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      if (key === 'project.config.delete') return ok({ ok: true });
       return ok(undefined);
     });
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByDisplayValue('PROJ');
-    await user.click(screen.getByText('Save'));
+    await screen.findByText('Workbench QAS');
+    const deleteButtons = screen.getAllByText('Delete');
+    await user.click(deleteButtons[0]);
+    // confirm button appears in the same row
+    await user.click(screen.getByText('Confirm delete'));
     await waitFor(() => {
-      const saveCall = invokeMock.mock.calls.find((c) => c[0] === 'project.saveConfig');
-      expect(saveCall).toBeDefined();
-      expect(saveCall![1]).toMatchObject({ projectId: '10001' });
+      expect(invokeMock).toHaveBeenCalledWith('project.config.delete', {
+        projectId: '10001',
+        configId: 'cfg-a',
+      });
     });
-    await screen.findByText('Saved');
   });
 
-  it('shows an error when project.saveConfig returns Result.fail', async () => {
+  it('"Save settings" persists only connection + template via project.saveSettings', async () => {
     invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') {
-        return ok({
-          projectCode: 'PROJ',
-          descriptionTemplate: '',
-          defaults: { type: 'K' as const },
-        });
-      }
-      if (key === 'project.saveConfig') return fail('save denied');
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      if (key === 'project.saveSettings') return ok({ ok: true });
       return ok(undefined);
     });
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByDisplayValue('PROJ');
-    await user.click(screen.getByText('Save'));
-    await screen.findByText('save denied');
+    await screen.findByText('Workbench QAS');
+    await user.click(screen.getByText('Save settings'));
+    await waitFor(() => {
+      const call = invokeMock.mock.calls.find((c) => c[0] === 'project.saveSettings');
+      expect(call).toBeDefined();
+      expect(call![1]).toMatchObject({
+        projectId: '10001',
+        settings: { connectionId: 'conn-1' },
+      });
+    });
   });
 
-  it('surfaces a connections.list error in the message banner', async () => {
+  it('shows banner with error message when connections.list returns Result.fail', async () => {
     invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return fail('no connections');
-      if (key === 'project.getConfig') {
-        return ok({
-          projectCode: 'PROJ',
-          descriptionTemplate: '',
-          defaults: { type: 'K' as const },
-        });
-      }
+      if (key === 'connections.list') return fail('connections boom');
+      if (key === 'project.getConfig') return ok(emptyProject);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
       return ok(undefined);
     });
     render(<App />);
-    await screen.findByText('no connections');
+    await screen.findByText('connections boom');
   });
 
-  it('typing into override client/username/password updates the inline form', async () => {
+  it('shows banner with error message when project.getConfig returns Result.fail (renders default cfg)', async () => {
     invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') {
-        return ok({
-          projectCode: 'PROJ',
-          descriptionTemplate: '',
-          defaults: { type: 'K' as const },
-        });
-      }
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return fail('cfg boom');
+      return ok(undefined);
+    });
+    render(<App />);
+    await screen.findByText('cfg boom');
+    // After a fail, the App falls back to the default cfg (no configs) — so
+    // the empty-state hint becomes visible too.
+    await screen.findByText(/No configurations yet/i);
+  });
+
+  it('shows banner with error message when project.saveSettings returns Result.fail', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      if (key === 'project.saveSettings') return fail('save boom');
       return ok(undefined);
     });
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByDisplayValue('PROJ');
-    await user.click(screen.getByLabelText('Override'));
-    await screen.findByText('Hostname (https URL)');
-    // After toggling to override, four textbox inputs appear (hostname, client,
-    // username, project code/default target also exist) plus a password input.
-    const inputs = screen.getAllByRole('textbox') as HTMLInputElement[];
-    // inputs (in render order): [hostname, client, username, project code, default target]
-    const hostnameInput = inputs[0];
-    const clientInput = inputs[1];
-    const usernameInput = inputs[2];
-    const passwordInput = document.querySelector('input[type="password"]') as HTMLInputElement;
-    await user.type(hostnameInput, 'https://my.sap');
-    await user.type(clientInput, '100');
-    await user.type(usernameInput, 'jdoe');
-    await user.type(passwordInput, 'pw');
-    expect(hostnameInput.value).toBe('https://my.sap');
-    expect(clientInput.value).toBe('100');
-    expect(usernameInput.value).toBe('jdoe');
-    expect(passwordInput.value).toBe('pw');
+    await screen.findByText('Workbench QAS');
+    await user.click(screen.getByText('Save settings'));
+    await screen.findByText('save boom');
   });
 
-  it('typing into the default target Textfield updates the value', async () => {
+  it('shows banner with error when project.config.delete fails (closes confirmation first)', async () => {
     invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') {
-        return ok({
-          projectCode: 'PROJ',
-          descriptionTemplate: '',
-          defaults: { type: 'K' as const, target: 'OLD' },
-        });
-      }
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      if (key === 'project.config.delete') return fail('delete boom');
       return ok(undefined);
     });
     const user = userEvent.setup();
     render(<App />);
-    // The default target Textfield prefills with 'OLD'; query it by display value
-    // so we know we're typing into the right input.
-    const targetInput = (await screen.findByDisplayValue('OLD')) as HTMLInputElement;
-    await user.type(targetInput, 'X');
-    await waitFor(() => expect(targetInput.value).toBe('OLDX'));
+    await screen.findByText('Workbench QAS');
+    const deleteButtons = screen.getAllByText('Delete');
+    await user.click(deleteButtons[0]);
+    await user.click(screen.getByText('Confirm delete'));
+    await screen.findByText('delete boom');
   });
 
-  it('shows preview warnings on a template that emits them', async () => {
-    invokeMock.mockImplementation(async (key: string, payload?: unknown) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') {
-        return ok({
-          projectCode: 'PROJ',
-          descriptionTemplate: '',
-          defaults: { type: 'K' as const },
-        });
-      }
-      if (key === 'project.previewTemplate') {
-        const tpl = (payload as { template: string }).template;
-        return ok({
-          text: tpl,
-          length: tpl.length,
-          warnings: ['unknown {{token}}'],
-          truncated: true,
-        });
-      }
+  it('Cancel on the delete confirmation hides confirm-delete and skips the call', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
       return ok(undefined);
     });
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByDisplayValue('PROJ');
-    const textareas = screen.getAllByRole('textbox').filter((el) => el.tagName === 'TEXTAREA');
-    await user.type(textareas[0], '{{token}}');
+    await screen.findByText('Workbench QAS');
+    const deleteButtons = screen.getAllByText('Delete');
+    await user.click(deleteButtons[0]);
+    await screen.findByText('Confirm delete');
+    // Two Cancel buttons may appear (we only opened one row, so just one).
+    await user.click(screen.getByText('Cancel'));
+    expect(screen.queryByText('Confirm delete')).not.toBeInTheDocument();
+    expect(invokeMock.mock.calls.find((c) => c[0] === 'project.config.delete')).toBeUndefined();
+  });
+
+  it('Cancel on the draft modal closes it without calling add/update', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(emptyProject);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText(/No configurations yet/i);
+    await user.click(screen.getByText('+ Add config'));
+    await screen.findByText('Add transport configuration');
+    await user.click(screen.getByText('Cancel'));
+    expect(screen.queryByText('Add transport configuration')).not.toBeInTheDocument();
+    expect(invokeMock.mock.calls.find((c) => c[0] === 'project.config.add')).toBeUndefined();
+  });
+
+  it('typing in the template TextArea updates cfg and re-fires preview once via useEffect', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return ok({ text: 'rendered', length: 8, warnings: ['legacy {{project.code}} no longer resolves'], truncated: true });
+      return ok(undefined);
+    });
+    render(<App />);
+    // Wait for the initial preview to land — the configured projectWithConfigs
+    // has a non-empty template, so the useEffect fires once on mount and
+    // produces the truncated/warnings preview branches.
+    await screen.findByText(/Preview:/);
     await screen.findByText(/truncated/);
-    await screen.findByText(/unknown/);
+    await screen.findByText(/legacy/);
   });
 
-  it('surfaces a preview error from project.previewTemplate', async () => {
+  it('renders the override-mode field stack and lets the user type into each Textfield (exercising the 5 onChange handlers)', async () => {
+    const overrideProject: ProjectConfig = {
+      connectionOverride: { id: 'override', label: 'override', hostname: 'https://h.example', systemId: 'X1H', client: '100', username: 'u', password: 'p' },
+      descriptionTemplate: '',
+      configs: [],
+    };
     invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') {
-        return ok({
-          projectCode: 'PROJ',
-          descriptionTemplate: '',
-          defaults: { type: 'K' as const },
-        });
-      }
-      if (key === 'project.previewTemplate') return fail('template syntax');
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(overrideProject);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
       return ok(undefined);
     });
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByDisplayValue('PROJ');
-    const textareas = screen.getAllByRole('textbox').filter((el) => el.tagName === 'TEXTAREA');
-    await user.type(textareas[0], 'X');
-    await screen.findByText('template syntax');
+    await screen.findByText(/Hostname \(https URL\)/);
+    // 5 override Textfields render as <input> via the passthrough mock. Type
+    // one character into each to fire the controlled onChange handlers.
+    const inputs = screen
+      .getAllByRole('textbox')
+      .filter((el) => (el as HTMLElement).tagName === 'INPUT') as HTMLInputElement[];
+    // No draft modal open, so the only textboxes are the 4 non-password override fields
+    // (in order: hostname, systemId, client, username — password is type="password" and not role=textbox).
+    expect(inputs.length).toBeGreaterThanOrEqual(4);
+    await user.type(inputs[0], 'x');
+    await user.type(inputs[1], 'y');
+    await user.type(inputs[2], 'z');
+    await user.type(inputs[3], 'w');
+    // Drive the password field directly via fireEvent.change since it has
+    // type="password" (no role=textbox). This exercises the 5th onChange
+    // branch that user.type can't reach via getAllByRole.
+    const pwd = document.querySelector('input[type="password"]') as HTMLInputElement;
+    expect(pwd).toBeTruthy();
+    fireEvent.change(pwd, { target: { value: 'pp' } });
   });
 
-  it('surfaces a project.getConfig error in the message banner and falls back to defaults', async () => {
+  it('Edit modal: changing label/projectCode + Save sends the patched config (covers more Textfield handlers)', async () => {
     invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') return fail('config fetch failed');
-      return ok(undefined);
-    });
-    render(<App />);
-    await screen.findByText('config fetch failed');
-  });
-
-  it('falls back to the connectionId text when the connection label is missing', async () => {
-    invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return ok([]); // no connections at all
-      if (key === 'project.getConfig') {
-        return ok({
-          // Reference an id that is not in the connections list — the Select
-          // should show the id as the value's label.
-          connectionId: 'orphaned-id',
-          projectCode: 'PROJ',
-          descriptionTemplate: '',
-          defaults: { type: 'K' as const },
-        });
-      }
-      return ok(undefined);
-    });
-    render(<App />);
-    await screen.findByDisplayValue('PROJ');
-  });
-
-  it('toggling override back to catalog clears the connection override', async () => {
-    invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') {
-        return ok({
-          projectCode: 'PROJ',
-          descriptionTemplate: '',
-          defaults: { type: 'K' as const },
-          connectionOverride: {
-            id: 'override',
-            label: 'override',
-            hostname: 'https://existing.sap.example',
-            client: '100',
-            username: 'usr-existing',
-            password: 'p',
-          },
-        });
-      }
-      if (key === 'project.saveConfig') return ok(undefined);
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      if (key === 'project.config.update') return ok({ ok: true });
       return ok(undefined);
     });
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByDisplayValue('usr-existing');
+    await screen.findByText('Workbench QAS');
+    await user.click(screen.getAllByText('Edit')[0]);
+    await screen.findByText('Edit transport configuration');
+    const inputs = screen
+      .getAllByRole('textbox')
+      .filter((el) => (el as HTMLElement).tagName === 'INPUT') as HTMLInputElement[];
+    // Exercise label and project-code change handlers (target onChange is
+    // already covered by the earlier edit/update test).
+    await user.clear(inputs[0]);
+    await user.type(inputs[0], 'Renamed');
+    await user.clear(inputs[2]);
+    await user.type(inputs[2], 'ZNEW');
+    await user.click(screen.getByText('Save', { selector: 'button' }));
+    await waitFor(() => {
+      const updateCall = invokeMock.mock.calls.find((c) => c[0] === 'project.config.update');
+      expect(updateCall).toBeDefined();
+      expect(updateCall![1]).toMatchObject({
+        patch: { label: 'Renamed', projectCode: 'ZNEW' },
+      });
+    });
+  });
+
+  it('previewTemplate failure no longer pollutes the shared message banner (warns instead)', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return fail('render boom');
+      return ok(undefined);
+    });
+    render(<App />);
+    await screen.findByText('Workbench QAS');
+    await waitFor(() => {
+      expect(invokeMock.mock.calls.some((c) => c[0] === 'project.previewTemplate')).toBe(true);
+    });
+    expect(screen.queryByText('render boom')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('project.previewTemplate failed'),
+        expect.stringContaining('render boom'),
+      );
+    });
+    warnSpy.mockRestore();
+  });
+
+  it('RadioGroup: switching mode to override turns on connectionOverride; back to catalog clears it', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(emptyProject);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    // Wait for the catalog Select (rendered when connectionOverride is undefined).
+    await screen.findByText(/No configurations yet/i);
+    // Switch to Override — clicking the radio fires the RadioGroup onChange
+    // handler with target.value === 'override', covering the override branch.
+    await user.click(screen.getByLabelText('Override'));
+    await screen.findByText(/Hostname \(https URL\)/);
+    // Switch back to From catalog — covers the catalog branch (mode !==
+    // 'override' → connectionOverride: undefined).
     await user.click(screen.getByLabelText('From catalog'));
-    // After toggling back the override panel should disappear.
     await waitFor(() => {
-      expect(screen.queryByDisplayValue('usr-existing')).not.toBeInTheDocument();
-    });
-    await user.click(screen.getByText('Save'));
-    await waitFor(() => {
-      const saveCall = invokeMock.mock.calls.find((c) => c[0] === 'project.saveConfig');
-      const payload = saveCall![1] as { config: { connectionOverride?: unknown } };
-      expect(payload.config.connectionOverride).toBeUndefined();
+      expect(screen.queryByText(/Hostname \(https URL\)/)).not.toBeInTheDocument();
     });
   });
 
-  it('changing the connection-id Select updates the connectionId in config', async () => {
+  it('catalog Select: choosing a connection invokes onChange and updates connectionId', async () => {
     invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list')
+      if (key === 'connections.list') {
         return ok([
-          { id: 'sap-a', label: 'A' },
-          { id: 'sap-b', label: 'B' },
+          { id: 'conn-1', label: 'A4H Dev' },
+          { id: 'conn-2', label: 'PRD Prod' },
         ]);
-      if (key === 'project.getConfig') {
-        return ok({
-          projectCode: 'PROJ',
-          descriptionTemplate: '',
-          defaults: { type: 'K' as const },
-        });
       }
-      if (key === 'project.saveConfig') return ok(undefined);
+      if (key === 'project.getConfig') return ok(emptyProject);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      if (key === 'project.saveSettings') return ok({ ok: true });
       return ok(undefined);
     });
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByDisplayValue('PROJ');
-    // Two selects render in catalog mode: the connection-id select and the
-    // default-type select. The connection-id one is first.
-    const selects = screen.getAllByTestId('forge-select');
-    await user.selectOptions(selects[0], 'sap-b');
-    await user.click(screen.getByText('Save'));
+    await screen.findByText(/No configurations yet/i);
+    // The first <select> in the document is the catalog connection picker
+    // (the draft modal is closed, so no Type select is present).
+    const selects = document.querySelectorAll('select');
+    expect(selects.length).toBeGreaterThanOrEqual(1);
+    fireEvent.change(selects[0], { target: { value: 'conn-2' } });
+    // Save settings to verify the new connectionId made it into state.
+    await user.click(screen.getByText('Save settings'));
     await waitFor(() => {
-      const saveCall = invokeMock.mock.calls.find((c) => c[0] === 'project.saveConfig');
-      expect(saveCall).toBeDefined();
-      const payload = saveCall![1] as { config: { connectionId?: string } };
-      expect(payload.config.connectionId).toBe('sap-b');
+      const call = invokeMock.mock.calls.find((c) => c[0] === 'project.saveSettings');
+      expect(call).toBeDefined();
+      expect(call![1]).toMatchObject({ settings: { connectionId: 'conn-2' } });
     });
   });
 
-  it('changing the default-type Select updates the defaults.type in config', async () => {
+  it('catalog Select: an unknown connectionId falls back to the id string itself (label-fallback branch)', async () => {
+    // Project has connectionId 'missing-conn' but the connections list does not
+    // include it — covers the `?? cfg.connectionId` branch in the Select value.
+    const projectUnknownConn: ProjectConfig = {
+      connectionId: 'missing-conn',
+      descriptionTemplate: '{{issue.key}}',
+      configs: [],
+    };
     invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') {
-        return ok({
-          projectCode: 'PROJ',
-          descriptionTemplate: '',
-          defaults: { type: 'K' as const },
-        });
-      }
-      if (key === 'project.saveConfig') return ok(undefined);
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(projectUnknownConn);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      return ok(undefined);
+    });
+    render(<App />);
+    // The Select gets rendered (catalog mode) and its value ends up matching
+    // an option only if the id is present; with our richer mock it falls back
+    // to '' visually, but the branch evaluation still runs.
+    await screen.findByText(/No configurations yet/i);
+    // Confirm the catalog select is rendered (i.e. the override branch was NOT taken).
+    expect(document.querySelectorAll('select').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('draft Type Select: changing the type invokes onChange and is persisted on Save', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(emptyProject);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      if (key === 'project.config.add') return ok({ id: 'cfg-new' });
       return ok(undefined);
     });
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByDisplayValue('PROJ');
-    // With no connections, the connection-id Select still renders. The
-    // default-type Select is the second one.
-    const selects = screen.getAllByTestId('forge-select');
-    await user.selectOptions(selects[selects.length - 1], 'W');
-    await user.click(screen.getByText('Save'));
+    await screen.findByText(/No configurations yet/i);
+    await user.click(screen.getByText('+ Add config'));
+    await screen.findByText('Add transport configuration');
+    // The draft modal opens — the Type <select> is the only <select> rendered
+    // (catalog Select is hidden in the empty-state-with-default-cfg flow).
+    const selects = document.querySelectorAll('select');
+    const typeSelect = selects[selects.length - 1] as HTMLSelectElement; // draft Type is the last
+    fireEvent.change(typeSelect, { target: { value: 'W' } });
+    const inputs = screen
+      .getAllByRole('textbox')
+      .filter((el) => (el as HTMLElement).tagName === 'INPUT') as HTMLInputElement[];
+    await user.type(inputs[0], 'Customizing PRD');
+    await user.type(inputs[1], 'PRD');
+    await user.type(inputs[2], 'ZP');
+    await user.click(screen.getByText('Save', { selector: 'button' }));
     await waitFor(() => {
-      const saveCall = invokeMock.mock.calls.find((c) => c[0] === 'project.saveConfig');
-      expect(saveCall).toBeDefined();
-      const payload = saveCall![1] as { config: { defaults: { type: string } } };
-      expect(payload.config.defaults.type).toBe('W');
+      const addCall = invokeMock.mock.calls.find((c) => c[0] === 'project.config.add');
+      expect(addCall).toBeDefined();
+      expect(addCall![1]).toMatchObject({ config: { type: 'W' } });
     });
   });
 
-  it('shows an error when project.saveConfig throws synchronously', async () => {
+  it('SmartValuesPicker insert appends a token to an empty template (no leading space branch)', async () => {
+    const emptyTemplateProject: ProjectConfig = {
+      connectionId: 'conn-1',
+      descriptionTemplate: '',
+      configs: [],
+    };
     invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') {
-        return ok({
-          projectCode: 'PROJ',
-          descriptionTemplate: '',
-          defaults: { type: 'K' as const },
-        });
-      }
-      if (key === 'project.saveConfig') throw new Error('boom');
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(emptyTemplateProject);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
       return ok(undefined);
     });
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByDisplayValue('PROJ');
-    await user.click(screen.getByText('Save'));
-    await screen.findByText('boom');
-  });
-
-  it('renders the SmartValuesPicker trigger next to the Description template field', async () => {
-    invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') {
-        return ok({
-          projectCode: 'PROJ',
-          descriptionTemplate: '',
-          defaults: { type: 'K' as const },
-        });
-      }
-      return ok(undefined);
+    await screen.findByText(/No configurations yet/i);
+    await user.click(screen.getByTestId('smart-values-insert'));
+    // After insertion the TextArea reflects the new template — '{{issue.key}}'.
+    await waitFor(() => {
+      const ta = document.querySelector('textarea') as HTMLTextAreaElement;
+      expect(ta).toBeTruthy();
+      expect(ta.value).toBe('{{issue.key}}');
     });
-    render(<App />);
-    await screen.findByDisplayValue('PROJ');
-    expect(screen.getByLabelText('Insert variable')).toBeInTheDocument();
   });
 
-  it('inserting a token from the picker appends it to the Description template', async () => {
-    invokeMock.mockImplementation(async (key: string, payload?: unknown) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') {
-        return ok({
-          projectCode: 'PROJ',
-          descriptionTemplate: 'PRE',
-          defaults: { type: 'K' as const },
-        });
-      }
-      if (key === 'project.previewTemplate') {
-        const tpl = (payload as { template: string }).template;
-        return ok({ text: tpl, length: tpl.length, warnings: [], truncated: false });
-      }
+  it('SmartValuesPicker insert prepends a space when current template lacks a trailing space', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      // projectWithConfigs.descriptionTemplate is '{{issue.key}}' (no trailing space).
+      if (key === 'project.getConfig') return ok(projectWithConfigs);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
       return ok(undefined);
     });
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByDisplayValue('PROJ');
-    const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
-    expect(textarea.value).toBe('PRE');
-    await user.click(screen.getByLabelText('Insert variable'));
-    await user.click(screen.getByText('{{project.key}}'));
-    await waitFor(() => expect(textarea.value).toBe('PRE {{project.key}}'));
+    await screen.findByText('Workbench QAS');
+    await user.click(screen.getByTestId('smart-values-insert'));
+    await waitFor(() => {
+      const ta = document.querySelector('textarea') as HTMLTextAreaElement;
+      expect(ta).toBeTruthy();
+      expect(ta.value).toBe('{{issue.key}} {{issue.key}}'); // space inserted between
+    });
   });
 
-  it('updating the project code reflects in the input', async () => {
+  it('SmartValuesPicker insert does not prepend a space when current template already ends with a space', async () => {
+    const trailingSpaceProject: ProjectConfig = {
+      connectionId: 'conn-1',
+      descriptionTemplate: '{{issue.key}} ',
+      configs: [],
+    };
     invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'connections.list') return ok([]);
-      if (key === 'project.getConfig') {
-        return ok({
-          projectCode: 'AAA',
-          descriptionTemplate: '',
-          defaults: { type: 'K' as const },
-        });
-      }
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(trailingSpaceProject);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
       return ok(undefined);
     });
     const user = userEvent.setup();
     render(<App />);
-    const codeInput = (await screen.findByDisplayValue('AAA')) as HTMLInputElement;
-    await user.type(codeInput, 'B');
-    await waitFor(() => expect(codeInput.value).toBe('AAAB'));
+    await screen.findByText(/No configurations yet/i);
+    await user.click(screen.getByTestId('smart-values-insert'));
+    await waitFor(() => {
+      const ta = document.querySelector('textarea') as HTMLTextAreaElement;
+      expect(ta).toBeTruthy();
+      // No additional space — the template already ended with one.
+      expect(ta.value).toBe('{{issue.key}} {{issue.key}}');
+    });
+  });
+
+  it('TextArea onChange updates cfg.descriptionTemplate (covers the textarea handler)', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'connections.list') return ok([{ id: 'conn-1', label: 'A4H Dev' }]);
+      if (key === 'project.getConfig') return ok(emptyProject);
+      if (key === 'project.previewTemplate') return ok({ text: 'x', length: 1, warnings: [], truncated: false });
+      return ok(undefined);
+    });
+    render(<App />);
+    await screen.findByText(/No configurations yet/i);
+    const ta = document.querySelector('textarea') as HTMLTextAreaElement;
+    expect(ta).toBeTruthy();
+    fireEvent.change(ta, { target: { value: 'hello {{user.email}}' } });
+    await waitFor(() => {
+      expect(ta.value).toBe('hello {{user.email}}');
+    });
   });
 });

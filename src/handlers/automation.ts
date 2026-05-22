@@ -1,8 +1,8 @@
 // src/handlers/automation.ts
-import { createTransportResolver, linkTransportResolver, releaseTransportResolver } from './issue-actions';
-import { getIssueTransports } from '../lib/storage';
+import { createTransportFromConfig, linkTransportResolver, releaseTransportResolver } from './issue-actions';
+import { getIssueTransports, getProjectConfig } from '../lib/storage';
 import type { TransportType, SapTransportEntry } from '../lib/types';
-import { SapError } from '../lib/errors';
+import { ConfigError, SapError } from '../lib/errors';
 import { logEvent } from '../lib/logger';
 
 interface AutomationArgs<P> { payload: P; context: { accountId?: string } }
@@ -19,21 +19,27 @@ function flatOut(entry: { requestId: string; status: string; statusText: string 
 }
 
 export async function automationCreate(args: AutomationArgs<{
-  projectId: string; issueKey: string; type: TransportType;
-  target?: string; descriptionOverride?: string; email: string;
+  projectId: string; issueKey: string; configLabel: string; email: string;
 }>): Promise<AutomationCreateOutput> {
   const started = Date.now();
   try {
-    const entry = await createTransportResolver({
-      payload: {
-        projectId: args.payload.projectId,
-        issueKey: args.payload.issueKey,
-        type: args.payload.type,
-        target: args.payload.target,
-        descriptionOverride: args.payload.descriptionOverride,
-        emailOverride: args.payload.email
-      },
-      context: { accountId: args.context.accountId ?? 'automation' }
+    const project = await getProjectConfig(args.payload.projectId);
+    if (!project) {
+      throw new ConfigError(`Project ${args.payload.projectId} is not configured`);
+    }
+    const config = (project.configs ?? []).find((c) => c.label === args.payload.configLabel);
+    if (!config) {
+      const available = (project.configs ?? []).map((c) => `"${c.label}"`).join(', ') || '<none>';
+      throw new ConfigError(
+        `No transport configuration with label "${args.payload.configLabel}" in this project. Available: ${available}`,
+      );
+    }
+    const entry = await createTransportFromConfig({
+      projectId: args.payload.projectId,
+      issueKey: args.payload.issueKey,
+      project,
+      config,
+      emailOverride: args.payload.email,
     });
     logEvent('info', { action: 'automation.create', projectId: args.payload.projectId, issueKey: args.payload.issueKey, requestId: entry.requestId, durationMs: Date.now() - started, outcome: 'ok' });
     return flatOut({ requestId: entry.requestId, status: entry.status, statusText: entry.statusText });

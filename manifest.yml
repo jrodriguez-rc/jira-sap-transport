@@ -46,13 +46,9 @@ modules:
           title: Issue key
           description: Jira issue key (e.g. PROJ-1)
           type: string
-        type:
-          title: Transport type
-          description: SAP transport type (K=workbench, W=customizing, T=task)
-          type: string
-        target:
-          title: Target system
-          description: SAP target system code (e.g. QAS)
+        configLabel:
+          title: Config label
+          description: Exact, case-sensitive label of the project's transport configuration to use
           type: string
         email:
           title: Owner email

@@ -68,12 +68,17 @@ vi.mock('@forge/api', () => ({
     s.reduce((acc, part, i) => acc + part + (args[i] ?? ''), '')
 }));
 
+const createTransportCalls: Array<{ description: string; type: string; email: string; target?: string }> = [];
+
 vi.mock('../lib/sap-client', () => ({
   createSapClient: () => ({
-    createTransport: vi.fn(async (i: { description: string }) => ({
-      Request: 'DEVK900123', Description: i.description, Owner: 'JAIME',
-      Type: 'K', TypeText: 'Workbench', Target: 'QAS', Status: 'D', StatusText: 'Modifiable', SAP__Messages: []
-    })),
+    createTransport: vi.fn(async (i: { description: string; type: string; email: string; target?: string }) => {
+      createTransportCalls.push(i);
+      return {
+        Request: 'DEVK900123', Description: i.description, Owner: 'JAIME',
+        Type: 'K', TypeText: 'Workbench', Target: 'QAS', Status: 'D', StatusText: 'Modifiable', SAP__Messages: []
+      };
+    }),
     releaseTransport: vi.fn(async (id: string) => ({
       Request: id, Description: 'x', Owner: 'JAIME', Type: 'K', TypeText: 'Workbench',
       Target: 'QAS', Status: 'R', StatusText: 'Released', SAP__Messages: []
@@ -89,11 +94,18 @@ vi.mock('../lib/sap-client', () => ({
 }));
 
 const conn: Connection = { id: 'c1', label: 'DEV', hostname: 'https://dev.sap.example', systemId: 'A4H', client: '100', username: 'u', password: 'p' };
-const cfg: ProjectConfig = { connectionId: 'c1', projectCode: 'PRJX', descriptionTemplate: '', defaults: { type: 'K', target: 'QAS' } };
+const cfg: ProjectConfig = {
+  connectionId: 'c1',
+  descriptionTemplate: '',
+  configs: [
+    { id: 'cfg-existing', label: 'Workbench QAS', type: 'K', target: 'QAS', projectCode: 'PRJX' }
+  ]
+};
 
 beforeEach(() => {
   appStore.clear();
   issueProps.clear();
+  createTransportCalls.length = 0;
   appStore.set('connections:c1', conn);
   appStore.set('project:10001:config', cfg);
   currentUserAccountId = 'acc1';
@@ -104,7 +116,7 @@ import { createTransportResolver, linkTransportResolver, releaseTransportResolve
 describe('createTransportResolver', () => {
   it('renders description, creates the transport and appends to issue property', async () => {
     const r = await createTransportResolver({
-      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K', descriptionOverride: '', target: 'QAS' },
+      payload: { projectId: '10001', issueKey: 'PROJ-1', configId: 'cfg-existing', descriptionOverride: '' },
       context: { accountId: 'acc1' }
     });
     expect(r.requestId).toBe('DEVK900123');
@@ -112,27 +124,41 @@ describe('createTransportResolver', () => {
     expect(stored.map((e) => e.requestId)).toEqual(['DEVK900123']);
   });
 
+  it('passes type and target from the matched config to the SAP client', async () => {
+    await createTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', configId: 'cfg-existing' },
+      context: { accountId: 'acc1' }
+    });
+    expect(createTransportCalls.length).toBeGreaterThan(0);
+    const call = createTransportCalls[createTransportCalls.length - 1];
+    expect(call.type).toBe('K');
+    expect(call.target).toBe('QAS');
+  });
+
   it('persists the Connection systemId on the saved SapTransportEntry', async () => {
     await createTransportResolver({
-      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      payload: { projectId: '10001', issueKey: 'PROJ-1', configId: 'cfg-existing' },
       context: { accountId: 'acc1' }
     });
     const stored = issueProps.get('PROJ-1') as Array<{ systemId?: string }>;
     expect(stored[0].systemId).toBe('A4H');
   });
 
-  it('rejects when no connection is configured', async () => {
+  it('rejects when project is not configured at all', async () => {
     appStore.delete('project:10001:config');
     await expect(createTransportResolver({
-      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      payload: { projectId: '10001', issueKey: 'PROJ-1', configId: 'cfg-existing' },
       context: { accountId: 'acc1' }
-    })).rejects.toThrow(/connection/i);
+    })).rejects.toThrow(/not configured/i);
   });
 
   it('rejects when project config has no connectionId or override', async () => {
-    appStore.set('project:10001:config', { projectCode: 'PRJX', descriptionTemplate: '', defaults: { type: 'K', target: 'QAS' } });
+    appStore.set('project:10001:config', {
+      descriptionTemplate: '',
+      configs: [{ id: 'cfg-existing', label: 'Workbench QAS', type: 'K', target: 'QAS', projectCode: 'PRJX' }]
+    });
     await expect(createTransportResolver({
-      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      payload: { projectId: '10001', issueKey: 'PROJ-1', configId: 'cfg-existing' },
       context: { accountId: 'acc1' }
     })).rejects.toThrow(/No SAP connection configured/);
   });
@@ -140,24 +166,29 @@ describe('createTransportResolver', () => {
   it('rejects when referenced connection is missing from storage', async () => {
     appStore.delete('connections:c1');
     await expect(createTransportResolver({
-      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      payload: { projectId: '10001', issueKey: 'PROJ-1', configId: 'cfg-existing' },
       context: { accountId: 'acc1' }
     })).rejects.toThrow(/does not exist/);
   });
 
   it('uses descriptionOverride when non-empty', async () => {
     const r = await createTransportResolver({
-      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K', descriptionOverride: 'Custom desc' },
+      payload: { projectId: '10001', issueKey: 'PROJ-1', configId: 'cfg-existing', descriptionOverride: 'Custom desc' },
       context: { accountId: 'acc1' }
     });
     expect(r.requestId).toBe('DEVK900123');
+    expect(r.description).toBe('Custom desc');
   });
 
   it('cascade: project template overrides connection template', async () => {
     appStore.set('connections:c1', { ...conn, descriptionTemplate: 'CONN: {{issue.key}}' });
-    appStore.set('project:10001:config', { connectionId: 'c1', projectCode: 'PRJX', descriptionTemplate: 'PRJ: {{issue.key}}', defaults: { type: 'K', target: 'QAS' } });
+    appStore.set('project:10001:config', {
+      connectionId: 'c1',
+      descriptionTemplate: 'PRJ: {{issue.key}}',
+      configs: [{ id: 'cfg-existing', label: 'Workbench QAS', type: 'K', target: 'QAS', projectCode: 'PRJX' }]
+    });
     const r = await createTransportResolver({
-      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      payload: { projectId: '10001', issueKey: 'PROJ-1', configId: 'cfg-existing' },
       context: { accountId: 'acc1' }
     });
     expect(r.description).toBe('PRJ: PROJ-1');
@@ -168,10 +199,31 @@ describe('createTransportResolver', () => {
     // project descriptionTemplate is '' (the existing default in beforeEach),
     // so the cascade must fall through to the connection template.
     const r = await createTransportResolver({
-      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      payload: { projectId: '10001', issueKey: 'PROJ-1', configId: 'cfg-existing' },
       context: { accountId: 'acc1' }
     });
     expect(r.description).toBe('CONN: PROJ-1');
+  });
+
+  it('throws when configId does not match any config in the project', async () => {
+    await expect(createTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', configId: 'cfg-missing' },
+      context: { accountId: 'acc1' }
+    })).rejects.toThrow(/not found/i);
+  });
+
+  it('feeds project.code from the matched config (not from any project-level field)', async () => {
+    appStore.set('project:10001:config', {
+      connectionId: 'c1',
+      descriptionTemplate: '{{project.code}}-{{issue.key}}',
+      configs: [{ id: 'cfg-new', label: 'Workbench QAS', type: 'K', target: 'QAS', projectCode: 'ZNEW' }]
+    });
+    await createTransportResolver({
+      payload: { projectId: '10001', issueKey: 'PROJ-1', configId: 'cfg-new' },
+      context: { accountId: 'acc1' }
+    });
+    const call = createTransportCalls[createTransportCalls.length - 1];
+    expect(call.description.startsWith('ZNEW-')).toBe(true);
   });
 });
 
@@ -212,7 +264,7 @@ describe('releaseTransportResolver', () => {
     await expect(releaseTransportResolver({
       payload: { projectId: '10001', issueKey: 'PROJ-1', requestId: 'DEVK900123' },
       context: { accountId: 'acc1' }
-    })).rejects.toThrow(/connection/i);
+    })).rejects.toThrow(/connection|configured/i);
   });
 });
 
@@ -262,13 +314,12 @@ describe('listTransportsResolver', () => {
 describe('createTransportResolver — defensive branches', () => {
   it('uses connectionOverride when project config supplies one (skips connectionId lookup)', async () => {
     appStore.set('project:10001:config', {
-      projectCode: 'PRJX',
       descriptionTemplate: '',
-      defaults: { type: 'K', target: 'QAS' },
-      connectionOverride: { hostname: 'https://qas.sap.example', client: '200', username: 'u2', password: 'p2' }
+      connectionOverride: { hostname: 'https://qas.sap.example', client: '200', username: 'u2', password: 'p2' },
+      configs: [{ id: 'cfg-existing', label: 'Workbench QAS', type: 'K', target: 'QAS', projectCode: 'PRJX' }]
     });
     const r = await createTransportResolver({
-      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      payload: { projectId: '10001', issueKey: 'PROJ-1', configId: 'cfg-existing' },
       context: { accountId: 'acc1' }
     });
     expect(r.requestId).toBe('DEVK900123');
@@ -277,7 +328,7 @@ describe('createTransportResolver — defensive branches', () => {
   it('rejects when /myself returns a non-200 status', async () => {
     currentUserAccountId = 'acc-403';
     await expect(createTransportResolver({
-      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      payload: { projectId: '10001', issueKey: 'PROJ-1', configId: 'cfg-existing' },
       context: { accountId: 'acc-403' }
     })).rejects.toThrow(/Cannot resolve user email/);
   });
@@ -285,14 +336,14 @@ describe('createTransportResolver — defensive branches', () => {
   it('rejects when /myself returns 200 but no emailAddress', async () => {
     currentUserAccountId = 'acc-no-email';
     await expect(createTransportResolver({
-      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K' },
+      payload: { projectId: '10001', issueKey: 'PROJ-1', configId: 'cfg-existing' },
       context: { accountId: 'acc-no-email' }
     })).rejects.toThrow(/no email visible/);
   });
 
   it('rejects when /issue returns a non-200 status', async () => {
     await expect(createTransportResolver({
-      payload: { projectId: '10001', issueKey: 'BROKEN-1', type: 'K' },
+      payload: { projectId: '10001', issueKey: 'BROKEN-1', configId: 'cfg-existing' },
       context: { accountId: 'acc1' }
     })).rejects.toThrow(/Cannot read issue/);
   });
@@ -300,7 +351,7 @@ describe('createTransportResolver — defensive branches', () => {
   it('uses emailOverride and skips the /myself lookup entirely', async () => {
     // accountId is missing on purpose — the emailOverride path is the bypass.
     const r = await createTransportResolver({
-      payload: { projectId: '10001', issueKey: 'PROJ-1', type: 'K', emailOverride: 'auto@bot.com' },
+      payload: { projectId: '10001', issueKey: 'PROJ-1', configId: 'cfg-existing', emailOverride: 'auto@bot.com' },
       context: {}
     });
     expect(r.requestId).toBe('DEVK900123');

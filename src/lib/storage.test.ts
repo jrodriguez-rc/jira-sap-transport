@@ -117,9 +117,8 @@ import type { ProjectConfig, SapTransportEntry } from './types';
 
 const cfg: ProjectConfig = {
   connectionId: 'dev-100',
-  projectCode: 'PROJX',
   descriptionTemplate: '{{issue.key}}',
-  defaults: { type: 'K' }
+  configs: []
 };
 
 describe('project config storage', () => {

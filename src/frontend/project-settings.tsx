@@ -15,7 +15,7 @@ import ForgeReconciler, {
 } from '@forge/react';
 import { invoke, view } from '@forge/bridge';
 import { SmartValuesPicker } from './components/SmartValuesPicker';
-import type { ProjectConfig, RenderResult, TransportType } from '../lib/types';
+import type { ProjectConfig, RenderResult, TransportConfig, TransportType } from '../lib/types';
 
 const DEFAULT_DESCRIPTION_TEMPLATE = '{{issue.key}} {{issue.fields.summary}}';
 
@@ -39,18 +39,33 @@ const TYPE_LABELS: Record<TransportType, string> = {
   T: 'Copy',
 };
 
+const TYPE_OPTIONS: SelectOption[] = [
+  { label: 'Workbench', value: 'K' },
+  { label: 'Customizing', value: 'W' },
+  { label: 'Copy', value: 'T' },
+];
+
+interface ConfigDraft {
+  id?: string; // present iff editing
+  label: string;
+  type: TransportType;
+  target: string;
+  projectCode: string;
+}
+
 export const App: React.FC = () => {
   const [projectId, setProjectId] = useState<string>('');
   const [connections, setConnections] = useState<ConnPublic[]>([]);
   const [cfg, setCfg] = useState<ProjectConfig | null>(null);
   const [preview, setPreview] = useState<RenderResult | null>(null);
   const [message, setMessage] = useState<string>('');
+  const [draft, setDraft] = useState<ConfigDraft | null>(null);  // null = modal closed
+  const [draftError, setDraftError] = useState<string>('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
-      const ctx = (await view.getContext()) as unknown as {
-        extension: { project: { id: string } };
-      };
+      const ctx = (await view.getContext()) as unknown as { extension: { project: { id: string } } };
       setProjectId(ctx.extension.project.id);
       const conns = await invoke<ResolverResult<ConnPublic[]>>('connections.list');
       setConnections(conns.ok ? conns.data : []);
@@ -60,70 +75,112 @@ export const App: React.FC = () => {
       });
       const cfgValue = c.ok ? c.data : undefined;
       if (!c.ok) setMessage(c.error.message);
-      // For a brand-new project (no saved config), seed the Description
-      // template with the engine default so the admin can edit-from-default
-      // rather than start blank. For an existing config without a saved
-      // template, leave it empty so the cascade picks the Connection's
-      // template (or, ultimately, the engine default at render time).
       setCfg(
         cfgValue ?? {
-          projectCode: '',
+          connectionId: undefined,
+          connectionOverride: undefined,
           descriptionTemplate: DEFAULT_DESCRIPTION_TEMPLATE,
-          defaults: { type: 'K' },
+          configs: [],
         },
       );
     })();
   }, []);
 
-  // Refresh the preview whenever the cfg's template changes (including after
-  // the initial load) so the admin immediately sees what the saved/seeded
-  // template will render to, without having to type in the textarea first.
   useEffect(() => {
     if (cfg?.descriptionTemplate && cfg.descriptionTemplate.length > 0) {
       void onPreview(cfg.descriptionTemplate);
     } else {
       setPreview(null);
     }
-    // We intentionally depend only on the template string; onPreview reads
-    // cfg.projectCode from the latest closure but that is stable enough for
-    // the preview's sample-issue-key purpose.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cfg?.descriptionTemplate]);
 
   const onPreview = async (template: string): Promise<void> => {
+    const sampleCode = cfg?.configs?.[0]?.projectCode || 'PRJ';
     const r = await invoke<ResolverResult<RenderResult>>('project.previewTemplate', {
       template,
-      sampleContext: {
-        issue: {
-          key: `${cfg?.projectCode || 'PRJ'}-1`,
-          fields: { summary: 'Sample summary' },
-        },
+      sampleContext: { issue: { key: `${sampleCode}-1`, fields: { summary: 'Sample summary' } } },
+    });
+    if (r.ok) setPreview(r.data);
+    // Preview is a transient nicety — don't pollute the shared top-of-page
+    // banner with a failure here (that surface is reserved for the
+    // load/save errors that block the user). Worst case the preview just
+    // doesn't update; the user keeps typing.
+    else console.warn('project.previewTemplate failed:', r.error.message);
+  };
+
+  const refreshProject = async (): Promise<void> => {
+    const c = await invoke<ResolverResult<ProjectConfig | undefined>>('project.getConfig', { projectId });
+    if (c.ok && c.data) setCfg(c.data);
+  };
+
+  const onSaveSettings = async (): Promise<void> => {
+    if (!cfg) return;
+    const r = await invoke<ResolverResult<unknown>>('project.saveSettings', {
+      projectId,
+      settings: {
+        connectionId: cfg.connectionId,
+        connectionOverride: cfg.connectionOverride,
+        descriptionTemplate: cfg.descriptionTemplate,
       },
     });
+    setMessage(r.ok ? 'Saved' : r.error.message);
+  };
+
+  const openAdd = (): void => {
+    setDraft({ label: '', type: 'K', target: '', projectCode: '' });
+    setDraftError('');
+  };
+
+  const openEdit = (c: TransportConfig): void => {
+    // Coerce undefined to '' so the controlled <input> stays controlled —
+    // target and projectCode are optional in storage but the input is always
+    // a string.
+    setDraft({
+      id: c.id,
+      label: c.label,
+      type: c.type,
+      target: c.target ?? '',
+      projectCode: c.projectCode ?? '',
+    });
+    setDraftError('');
+  };
+
+  const onSubmitDraft = async (): Promise<void> => {
+    if (!draft) return;
+    const payload = {
+      label: draft.label.trim(),
+      type: draft.type,
+      target: draft.target.trim(),
+      projectCode: draft.projectCode.trim(),
+    };
+    const r = draft.id
+      ? await invoke<ResolverResult<unknown>>('project.config.update', {
+          projectId,
+          configId: draft.id,
+          patch: payload,
+        })
+      : await invoke<ResolverResult<{ id: string }>>('project.config.add', { projectId, config: payload });
     if (r.ok) {
-      setPreview(r.data);
+      setDraft(null);
+      await refreshProject();
     } else {
-      setMessage(r.error.message);
+      setDraftError(r.error.message);
     }
   };
 
-  const onSave = async (): Promise<void> => {
-    if (!cfg) return;
-    try {
-      const r = await invoke<ResolverResult<unknown>>('project.saveConfig', { projectId, config: cfg });
-      setMessage(r.ok ? 'Saved' : r.error.message);
-    } catch (e) {
-      setMessage((e as Error).message);
-    }
+  const onConfirmDelete = async (): Promise<void> => {
+    if (!confirmDeleteId) return;
+    const r = await invoke<ResolverResult<unknown>>('project.config.delete', {
+      projectId,
+      configId: confirmDeleteId,
+    });
+    setConfirmDeleteId(null);
+    if (r.ok) await refreshProject();
+    else setMessage(r.error.message);
   };
 
   if (!cfg) return <Text>Loading…</Text>;
-
-  const typeOptions: SelectOption[] = [
-    { label: 'Workbench', value: 'K' },
-    { label: 'Customizing', value: 'W' },
-    { label: 'Copy', value: 'T' },
-  ];
 
   return (
     <Stack space="space.200">
@@ -134,7 +191,8 @@ export const App: React.FC = () => {
         </SectionMessage>
       )}
 
-      <Label labelFor="connection-mode">SAP Connection</Label>
+      <Heading as="h2">SAP Connection</Heading>
+      <Label labelFor="connection-mode">Mode</Label>
       <RadioGroup
         name="connection-mode"
         value={cfg.connectionOverride ? 'override' : 'catalog'}
@@ -148,15 +206,7 @@ export const App: React.FC = () => {
             ...cfg,
             connectionOverride:
               mode === 'override'
-                ? {
-                    id: 'override',
-                    label: 'override',
-                    hostname: '',
-                    systemId: '',
-                    client: '',
-                    username: '',
-                    password: '',
-                  }
+                ? { id: 'override', label: 'override', hostname: '', systemId: '', client: '', username: '', password: '' }
                 : undefined,
           });
         }}
@@ -166,12 +216,7 @@ export const App: React.FC = () => {
           options={connections.map((c) => ({ label: c.label, value: c.id }))}
           value={
             cfg.connectionId
-              ? {
-                  label:
-                    connections.find((c) => c.id === cfg.connectionId)?.label ??
-                    cfg.connectionId,
-                  value: cfg.connectionId,
-                }
+              ? { label: connections.find((c) => c.id === cfg.connectionId)?.label ?? cfg.connectionId, value: cfg.connectionId }
               : undefined
           }
           onChange={(opt) => {
@@ -187,13 +232,7 @@ export const App: React.FC = () => {
             placeholder="https://sap.example.com"
             value={cfg.connectionOverride.hostname}
             onChange={(e) =>
-              setCfg({
-                ...cfg,
-                connectionOverride: {
-                  ...cfg.connectionOverride!,
-                  hostname: (e.target as { value?: string }).value ?? '',
-                },
-              })
+              setCfg({ ...cfg, connectionOverride: { ...cfg.connectionOverride!, hostname: (e.target as { value?: string }).value ?? '' } })
             }
           />
           <Label labelFor="ov-systemId">System ID (3 chars)</Label>
@@ -201,39 +240,21 @@ export const App: React.FC = () => {
             placeholder="A4H"
             value={cfg.connectionOverride.systemId}
             onChange={(e) =>
-              setCfg({
-                ...cfg,
-                connectionOverride: {
-                  ...cfg.connectionOverride!,
-                  systemId: (e.target as { value?: string }).value ?? '',
-                },
-              })
+              setCfg({ ...cfg, connectionOverride: { ...cfg.connectionOverride!, systemId: (e.target as { value?: string }).value ?? '' } })
             }
           />
           <Label labelFor="ov-client">Client (3 digits)</Label>
           <Textfield
             value={cfg.connectionOverride.client}
             onChange={(e) =>
-              setCfg({
-                ...cfg,
-                connectionOverride: {
-                  ...cfg.connectionOverride!,
-                  client: (e.target as { value?: string }).value ?? '',
-                },
-              })
+              setCfg({ ...cfg, connectionOverride: { ...cfg.connectionOverride!, client: (e.target as { value?: string }).value ?? '' } })
             }
           />
           <Label labelFor="ov-username">Username</Label>
           <Textfield
             value={cfg.connectionOverride.username}
             onChange={(e) =>
-              setCfg({
-                ...cfg,
-                connectionOverride: {
-                  ...cfg.connectionOverride!,
-                  username: (e.target as { value?: string }).value ?? '',
-                },
-              })
+              setCfg({ ...cfg, connectionOverride: { ...cfg.connectionOverride!, username: (e.target as { value?: string }).value ?? '' } })
             }
           />
           <Label labelFor="ov-password">Password</Label>
@@ -241,70 +262,22 @@ export const App: React.FC = () => {
             type="password"
             value={cfg.connectionOverride.password}
             onChange={(e) =>
-              setCfg({
-                ...cfg,
-                connectionOverride: {
-                  ...cfg.connectionOverride!,
-                  password: (e.target as { value?: string }).value ?? '',
-                },
-              })
+              setCfg({ ...cfg, connectionOverride: { ...cfg.connectionOverride!, password: (e.target as { value?: string }).value ?? '' } })
             }
           />
         </Stack>
       )}
 
-      <Label labelFor="project-code">Project code</Label>
-      <Textfield
-        value={cfg.projectCode}
-        onChange={(e) =>
-          setCfg({
-            ...cfg,
-            projectCode: (e.target as { value?: string }).value ?? '',
-          })
-        }
-      />
-
-      <Label labelFor="default-type">Default type</Label>
-      <Select
-        options={typeOptions}
-        value={{
-          label: TYPE_LABELS[cfg.defaults.type],
-          value: cfg.defaults.type,
-        }}
-        onChange={(opt) => {
-          const o = opt as SelectOption | null;
-          setCfg({
-            ...cfg,
-            defaults: {
-              ...cfg.defaults,
-              type: (o?.value ?? 'K') as TransportType,
-            },
-          });
-        }}
-      />
-
-      <Label labelFor="default-target">Default target</Label>
-      <Textfield
-        value={cfg.defaults.target ?? ''}
-        onChange={(e) =>
-          setCfg({
-            ...cfg,
-            defaults: {
-              ...cfg.defaults,
-              target: (e.target as { value?: string }).value ?? '',
-            },
-          })
-        }
-      />
-
-      <Label labelFor="description-template">Description template</Label>
+      <Heading as="h2">Description template</Heading>
       <Inline space="space.050">
         <SmartValuesPicker
           onInsert={(tok) => {
             const cur = cfg.descriptionTemplate ?? '';
             const next = cur.length > 0 && !cur.endsWith(' ') ? cur + ' ' + tok : cur + tok;
             setCfg({ ...cfg, descriptionTemplate: next });
-            void onPreview(next);
+            // No eager onPreview here — the useEffect on
+            // [cfg?.descriptionTemplate] picks it up. Previously this
+            // double-fired previewTemplate on every keystroke.
           }}
         />
       </Inline>
@@ -313,14 +286,13 @@ export const App: React.FC = () => {
         onChange={(e) => {
           const next = (e.target as { value?: string }).value ?? '';
           setCfg({ ...cfg, descriptionTemplate: next });
-          void onPreview(next);
+          // No eager onPreview here either — see SmartValuesPicker above.
         }}
       />
       {preview && (
         <Box padding="space.100">
           <Text>
-            Preview: "{preview.text}" ({preview.length}/60
-            {preview.truncated ? ' — truncated' : ''})
+            Preview: "{preview.text}" ({preview.length}/60{preview.truncated ? ' — truncated' : ''})
           </Text>
           {preview.warnings.map((w) => (
             <Text key={w}>⚠ {w}</Text>
@@ -329,10 +301,77 @@ export const App: React.FC = () => {
       )}
 
       <Inline space="space.100">
-        <Button appearance="primary" onClick={() => void onSave()}>
-          Save
+        <Button appearance="primary" onClick={() => void onSaveSettings()}>
+          Save settings
         </Button>
       </Inline>
+
+      <Heading as="h2">Transport configurations</Heading>
+      <Inline space="space.100">
+        <Button onClick={openAdd}>+ Add config</Button>
+      </Inline>
+      {cfg.configs.length === 0 ? (
+        <Text>No configurations yet — click + Add config to define one.</Text>
+      ) : (
+        <Stack space="space.100">
+          {cfg.configs.map((c) => (
+            <Inline key={c.id} space="space.100">
+              <Text>{c.label}</Text>
+              <Text>{TYPE_LABELS[c.type]}</Text>
+              <Text>{c.target}</Text>
+              <Text>{c.projectCode}</Text>
+              <Button onClick={() => openEdit(c)}>Edit</Button>
+              {confirmDeleteId === c.id ? (
+                <Inline space="space.050">
+                  <Button appearance="danger" onClick={() => void onConfirmDelete()}>Confirm delete</Button>
+                  <Button onClick={() => setConfirmDeleteId(null)}>Cancel</Button>
+                </Inline>
+              ) : (
+                <Button onClick={() => setConfirmDeleteId(c.id)}>Delete</Button>
+              )}
+            </Inline>
+          ))}
+        </Stack>
+      )}
+
+      {draft && (
+        <Box padding="space.200">
+          <Heading as="h3">{draft.id ? 'Edit' : 'Add'} transport configuration</Heading>
+          {draftError && (
+            <SectionMessage appearance="error">
+              <Text>{draftError}</Text>
+            </SectionMessage>
+          )}
+          <Label labelFor="draft-label">Label</Label>
+          <Textfield
+            value={draft.label}
+            onChange={(e) => setDraft({ ...draft, label: (e.target as { value?: string }).value ?? '' })}
+          />
+          <Label labelFor="draft-type">Type</Label>
+          <Select
+            options={TYPE_OPTIONS}
+            value={{ label: TYPE_LABELS[draft.type], value: draft.type }}
+            onChange={(opt) => {
+              const o = opt as SelectOption | null;
+              setDraft({ ...draft, type: (o?.value ?? 'K') as TransportType });
+            }}
+          />
+          <Label labelFor="draft-target">Target</Label>
+          <Textfield
+            value={draft.target}
+            onChange={(e) => setDraft({ ...draft, target: (e.target as { value?: string }).value ?? '' })}
+          />
+          <Label labelFor="draft-projectCode">Project code</Label>
+          <Textfield
+            value={draft.projectCode}
+            onChange={(e) => setDraft({ ...draft, projectCode: (e.target as { value?: string }).value ?? '' })}
+          />
+          <Inline space="space.100">
+            <Button appearance="primary" onClick={() => void onSubmitDraft()}>Save</Button>
+            <Button onClick={() => setDraft(null)}>Cancel</Button>
+          </Inline>
+        </Box>
+      )}
     </Stack>
   );
 };

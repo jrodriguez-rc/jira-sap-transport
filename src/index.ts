@@ -3,7 +3,12 @@ import {
   listConnectionsResolver, saveConnectionResolver, deleteConnectionResolver, testConnectionResolver
 } from './handlers/connections';
 import {
-  getProjectConfigResolver, saveProjectConfigResolver, previewTemplateResolver
+  getProjectConfigResolver,
+  saveSettingsResolver,
+  addConfigResolver,
+  updateConfigResolver,
+  deleteConfigResolver,
+  previewTemplateResolver,
 } from './handlers/project-config';
 import {
   createTransportResolver, linkTransportResolver, releaseTransportResolver,
@@ -48,7 +53,10 @@ resolver.define('connections.delete', bridgeSafe(deleteConnectionResolver));
 resolver.define('connections.test', testConnectionResolver);
 
 resolver.define('project.getConfig', bridgeSafe(getProjectConfigResolver));
-resolver.define('project.saveConfig', bridgeSafe(saveProjectConfigResolver));
+resolver.define('project.saveSettings', bridgeSafe(saveSettingsResolver));
+resolver.define('project.config.add', bridgeSafe(addConfigResolver));
+resolver.define('project.config.update', bridgeSafe(updateConfigResolver));
+resolver.define('project.config.delete', bridgeSafe(deleteConfigResolver));
 resolver.define('project.previewTemplate', bridgeSafe(previewTemplateResolver));
 
 resolver.define('issue.create', bridgeSafe(createTransportResolver));

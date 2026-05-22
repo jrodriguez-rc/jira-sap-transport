@@ -21,7 +21,7 @@ import { invoke, router, view } from '@forge/bridge';
 // carry `allow-popups`. Forge only appends that directive when the
 // manifest declares `permissions.external.fetch.client: - address: '*'`
 // — see the manifest comment.
-import type { SapTransportEntry, TransportType } from './types';
+import type { ProjectConfig, SapTransportEntry, TransportConfig, TransportType } from './types';
 
 interface IssueContext {
   extension: {
@@ -56,20 +56,34 @@ export const App: React.FC = () => {
   const [projectId, setProjectId] = useState<string>('');
   const [issueKey, setIssueKey] = useState<string>('');
   const [entries, setEntries] = useState<SapTransportEntry[]>([]);
+  const [configs, setConfigs] = useState<TransportConfig[]>([]);
   const [message, setMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
-  const [createOpen, setCreateOpen] = useState<TransportType | null>(null);
+  const [createFor, setCreateFor] = useState<TransportConfig | null>(null);
   const [linkOpen, setLinkOpen] = useState<boolean>(false);
 
   useEffect(() => {
     void (async () => {
-      const ctx = (await view.getContext()) as unknown as IssueContext;
-      setProjectId(ctx.extension.project.id);
-      setIssueKey(ctx.extension.issue.key);
-      const r = await invoke<ResolverResult<SapTransportEntry[]>>('issue.list', {
-        issueKey: ctx.extension.issue.key,
-      });
-      setEntries(r.ok ? r.data : []);
-      if (!r.ok) setMessage({ kind: 'error', text: r.error.message });
+      try {
+        const ctx = (await view.getContext()) as unknown as IssueContext;
+        setProjectId(ctx.extension.project.id);
+        setIssueKey(ctx.extension.issue.key);
+        const [list, project] = await Promise.all([
+          invoke<ResolverResult<SapTransportEntry[]>>('issue.list', {
+            issueKey: ctx.extension.issue.key,
+          }),
+          invoke<ResolverResult<ProjectConfig | undefined>>('project.getConfig', {
+            projectId: ctx.extension.project.id,
+          }),
+        ]);
+        setEntries(list.ok ? list.data : []);
+        if (!list.ok) setMessage({ kind: 'error', text: list.error.message });
+        setConfigs(project.ok && project.data ? project.data.configs : []);
+      } catch (e) {
+        // Without this, a synchronous reject from view.getContext() or
+        // either invoke() leaves the panel empty with no visible error.
+        // Same pattern used by onRelease/onRefresh below.
+        setMessage({ kind: 'error', text: (e as Error).message });
+      }
     })();
   }, []);
 
@@ -193,26 +207,31 @@ export const App: React.FC = () => {
       />
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <Button onClick={() => setCreateOpen('K')}>+ Workbench</Button>
-        <Button onClick={() => setCreateOpen('W')}>+ Customizing</Button>
-        <Button onClick={() => setCreateOpen('T')}>+ Copy</Button>
+        {configs.map((c) => (
+          <Button key={c.id} onClick={() => setCreateFor(c)}>{`+ ${c.label}`}</Button>
+        ))}
         <Button onClick={() => setLinkOpen(true)}>Link existing</Button>
       </div>
+      {configs.length === 0 && (
+        <SectionMessage appearance="information">
+          <p>Ask a project admin to add a transport configuration in project settings before creating new requests.</p>
+        </SectionMessage>
+      )}
 
       <small style={{ color: '#626f86' }}>
         Opening a Request ID requires SAP ADT (Eclipse) installed locally.
       </small>
 
       <ModalTransition>
-        {createOpen && (
+        {createFor && (
           <CreateDialog
-            type={createOpen}
+            config={createFor}
             projectId={projectId}
             issueKey={issueKey}
-            onClose={() => setCreateOpen(null)}
+            onClose={() => setCreateFor(null)}
             onDone={async (msg) => {
               setMessage({ kind: 'success', text: msg });
-              setCreateOpen(null);
+              setCreateFor(null);
               await reload();
             }}
             onError={(msg) => setMessage({ kind: 'error', text: msg })}
@@ -240,7 +259,7 @@ export const App: React.FC = () => {
 };
 
 interface CreateDialogProps {
-  type: TransportType;
+  config: TransportConfig;
   projectId: string;
   issueKey: string;
   onClose: () => void;
@@ -249,7 +268,7 @@ interface CreateDialogProps {
 }
 
 export const CreateDialog: React.FC<CreateDialogProps> = ({
-  type,
+  config,
   projectId,
   issueKey,
   onClose,
@@ -257,16 +276,14 @@ export const CreateDialog: React.FC<CreateDialogProps> = ({
   onError,
 }) => {
   const [override, setOverride] = useState<string>('');
-  const [target, setTarget] = useState<string>('');
 
   const submit = async (): Promise<void> => {
     try {
       const r = await invoke<ResolverResult<SapTransportEntry>>('issue.create', {
         projectId,
         issueKey,
-        type,
+        configId: config.id,
         descriptionOverride: override,
-        target: target.length > 0 ? target : undefined,
       });
       if (r.ok) {
         await onDone(`Created ${r.data.requestId}`);
@@ -281,7 +298,7 @@ export const CreateDialog: React.FC<CreateDialogProps> = ({
   return (
     <Modal onClose={onClose}>
       <ModalHeader>
-        <ModalTitle>Create {TYPE_LABELS[type]} transport</ModalTitle>
+        <ModalTitle>Create {config.label}</ModalTitle>
       </ModalHeader>
       <ModalBody>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -289,11 +306,6 @@ export const CreateDialog: React.FC<CreateDialogProps> = ({
           <Textfield
             value={override}
             onChange={(e) => setOverride((e.target as HTMLInputElement).value)}
-          />
-          <label>Target system (optional, falls back to project default)</label>
-          <Textfield
-            value={target}
-            onChange={(e) => setTarget((e.target as HTMLInputElement).value)}
           />
         </div>
       </ModalBody>

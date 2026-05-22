@@ -5,18 +5,24 @@ import { createSapClient } from '../lib/sap-client';
 import { render } from '../lib/template';
 import { ConfigError } from '../lib/errors';
 import { logEvent } from '../lib/logger';
-import type { Connection, ProjectConfig, RequestType, SapTransportEntry, TransportType } from '../lib/types';
+import type {
+  Connection, ProjectConfig, RequestType, SapTransportEntry, TransportConfig,
+} from '../lib/types';
 
 interface ResolverArgs<P = unknown> { payload: P; context: { accountId?: string } }
 
-async function resolveConnection(projectId: string): Promise<{ conn: Connection; cfg: ProjectConfig }> {
-  const cfg = await getProjectConfig(projectId);
-  if (!cfg) throw new ConfigError('Project not configured: no SAP connection selected');
-  if (cfg.connectionOverride) return { conn: cfg.connectionOverride, cfg };
-  if (cfg.connectionId) {
-    const c = await getConnection(cfg.connectionId);
+/**
+ * Resolve the Connection for an already-loaded ProjectConfig. Callers that
+ * also need the project itself already have it (they loaded it to find the
+ * matching TransportConfig), so we don't re-read it from KVS here — that
+ * avoided a 2× read on the issue.create / automation.create hot path.
+ */
+async function resolveConnection(project: ProjectConfig): Promise<Connection> {
+  if (project.connectionOverride) return project.connectionOverride;
+  if (project.connectionId) {
+    const c = await getConnection(project.connectionId);
     if (!c) throw new ConfigError('Referenced SAP connection does not exist');
-    return { conn: c, cfg };
+    return c;
   }
   throw new ConfigError('No SAP connection configured for project');
 }
@@ -48,46 +54,97 @@ function toEntry(rt: RequestType, conn: Connection): SapTransportEntry {
     createdAt: new Date().toISOString(),
     status: rt.Status,
     statusText: rt.StatusText,
-    systemId: conn.systemId
+    systemId: conn.systemId,
   };
 }
 
+/**
+ * Shared implementation used by both the panel resolver (`createTransportResolver`)
+ * and the automation handler (`automationCreate`). Both first locate the config
+ * (by id or by label respectively) and then call this function.
+ */
+export async function createTransportFromConfig(args: {
+  projectId: string;
+  issueKey: string;
+  project: ProjectConfig;
+  config: TransportConfig;
+  descriptionOverride?: string;
+  emailOverride?: string;
+}): Promise<SapTransportEntry> {
+  const { project } = args;
+  const conn = await resolveConnection(project);
+  const email = args.emailOverride ?? (await fetchUserEmail());
+  const issue = await fetchIssue(args.issueKey);
+
+  const renderCtx = {
+    issue,
+    project: { code: args.config.projectCode },
+    user: { email },
+    date: { iso: new Date().toISOString().slice(0, 10) },
+  };
+  // Cascade: per-call override > project template > connection template > engine default.
+  // render() treats empty strings as "use DEFAULT_TEMPLATE", so passing '' is the right
+  // way to delegate to the engine when nothing else is configured.
+  const templateOverride = args.descriptionOverride?.trim();
+  const projectTemplate = project.descriptionTemplate?.trim();
+  const connectionTemplate = conn.descriptionTemplate?.trim();
+  const effective = templateOverride || projectTemplate || connectionTemplate || '';
+  const rendered = render(effective, renderCtx);
+
+  const client = createSapClient(conn);
+  const rt = await client.createTransport({
+    description: rendered.text,
+    type: args.config.type,
+    email,
+    target: args.config.target,
+  });
+
+  const entry = toEntry(rt, conn);
+  const list = await getIssueTransports(args.issueKey);
+  await setIssueTransports(args.issueKey, [...list, entry]);
+  return entry;
+}
+
 export async function createTransportResolver(args: ResolverArgs<{
-  projectId: string; issueKey: string; type: TransportType; descriptionOverride?: string; target?: string;
+  projectId: string;
+  issueKey: string;
+  configId: string;
+  descriptionOverride?: string;
   emailOverride?: string;
 }>) {
   const started = Date.now();
   try {
-    const { conn, cfg } = await resolveConnection(args.payload.projectId);
-    const email = args.payload.emailOverride ?? (await fetchUserEmail());
-    const issue = await fetchIssue(args.payload.issueKey);
-
-    const renderCtx = { issue, project: { code: cfg.projectCode }, user: { email }, date: { iso: new Date().toISOString().slice(0, 10) } };
-    // Cascade: per-call override > project template > connection template > engine default.
-    // render() treats empty strings as "use DEFAULT_TEMPLATE", so passing '' is the right
-    // way to delegate to the engine when nothing else is configured.
-    const templateOverride = args.payload.descriptionOverride?.trim();
-    const projectTemplate = cfg.descriptionTemplate?.trim();
-    const connectionTemplate = conn.descriptionTemplate?.trim();
-    const effective = templateOverride || projectTemplate || connectionTemplate || '';
-    const rendered = render(effective, renderCtx);
-
-    const client = createSapClient(conn);
-    const rt = await client.createTransport({
-      description: rendered.text,
-      type: args.payload.type,
-      email,
-      target: args.payload.target ?? cfg.defaults.target
+    const project = await getProjectConfig(args.payload.projectId);
+    if (!project) throw new ConfigError('Project not configured');
+    const config = project.configs?.find((c) => c.id === args.payload.configId);
+    if (!config) throw new ConfigError(`Transport configuration not found: ${args.payload.configId}`);
+    const entry = await createTransportFromConfig({
+      projectId: args.payload.projectId,
+      issueKey: args.payload.issueKey,
+      project,
+      config,
+      descriptionOverride: args.payload.descriptionOverride,
+      emailOverride: args.payload.emailOverride,
     });
-
-    const entry = toEntry(rt, conn);
-    const list = await getIssueTransports(args.payload.issueKey);
-    await setIssueTransports(args.payload.issueKey, [...list, entry]);
-
-    logEvent('info', { action: 'issue.create', projectId: args.payload.projectId, issueKey: args.payload.issueKey, requestId: entry.requestId, durationMs: Date.now() - started, outcome: 'ok' });
+    logEvent('info', {
+      action: 'issue.create',
+      projectId: args.payload.projectId,
+      issueKey: args.payload.issueKey,
+      requestId: entry.requestId,
+      durationMs: Date.now() - started,
+      outcome: 'ok',
+    });
     return entry;
   } catch (e) {
-    logEvent('error', { action: 'issue.create', projectId: args.payload.projectId, issueKey: args.payload.issueKey, durationMs: Date.now() - started, outcome: 'fail', errorCode: (e as { code?: string }).code, message: (e as Error).message });
+    logEvent('error', {
+      action: 'issue.create',
+      projectId: args.payload.projectId,
+      issueKey: args.payload.issueKey,
+      durationMs: Date.now() - started,
+      outcome: 'fail',
+      errorCode: (e as { code?: string }).code,
+      message: (e as Error).message,
+    });
     throw e;
   }
 }
@@ -95,7 +152,9 @@ export async function createTransportResolver(args: ResolverArgs<{
 export async function linkTransportResolver(args: ResolverArgs<{ projectId: string; issueKey: string; requestId: string }>) {
   const started = Date.now();
   try {
-    const { conn } = await resolveConnection(args.payload.projectId);
+    const project = await getProjectConfig(args.payload.projectId);
+    if (!project) throw new ConfigError('Project not configured: no SAP connection selected');
+    const conn = await resolveConnection(project);
     const client = createSapClient(conn);
     const rt = await client.getTransport(args.payload.requestId);
     const entry = toEntry(rt, conn);
@@ -122,14 +181,16 @@ export async function linkTransportResolver(args: ResolverArgs<{ projectId: stri
 export async function releaseTransportResolver(args: ResolverArgs<{ projectId: string; issueKey: string; requestId: string }>) {
   const started = Date.now();
   try {
-    const { conn } = await resolveConnection(args.payload.projectId);
+    const project = await getProjectConfig(args.payload.projectId);
+    if (!project) throw new ConfigError('Project not configured: no SAP connection selected');
+    const conn = await resolveConnection(project);
     const client = createSapClient(conn);
     const rt = await client.releaseTransport(args.payload.requestId);
     const list = await getIssueTransports(args.payload.issueKey);
     const next = list.map((e) =>
       e.requestId === rt.Request
         ? { ...e, systemId: conn.systemId, status: rt.Status, statusText: rt.StatusText, releasedAt: new Date().toISOString() }
-        : e
+        : e,
     );
     await setIssueTransports(args.payload.issueKey, next);
     logEvent('info', { action: 'issue.release', projectId: args.payload.projectId, issueKey: args.payload.issueKey, requestId: args.payload.requestId, durationMs: Date.now() - started, outcome: 'ok' });
@@ -143,12 +204,14 @@ export async function releaseTransportResolver(args: ResolverArgs<{ projectId: s
 export async function refreshTransportResolver(args: ResolverArgs<{ projectId: string; issueKey: string; requestId: string }>) {
   const started = Date.now();
   try {
-    const { conn } = await resolveConnection(args.payload.projectId);
+    const project = await getProjectConfig(args.payload.projectId);
+    if (!project) throw new ConfigError('Project not configured: no SAP connection selected');
+    const conn = await resolveConnection(project);
     const client = createSapClient(conn);
     const rt = await client.getTransport(args.payload.requestId);
     const list = await getIssueTransports(args.payload.issueKey);
     const next = list.map((e) =>
-      e.requestId === rt.Request ? { ...e, systemId: conn.systemId, status: rt.Status, statusText: rt.StatusText } : e
+      e.requestId === rt.Request ? { ...e, systemId: conn.systemId, status: rt.Status, statusText: rt.StatusText } : e,
     );
     await setIssueTransports(args.payload.issueKey, next);
     logEvent('info', { action: 'issue.refresh', projectId: args.payload.projectId, issueKey: args.payload.issueKey, requestId: args.payload.requestId, durationMs: Date.now() - started, outcome: 'ok' });
