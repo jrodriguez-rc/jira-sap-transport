@@ -124,29 +124,78 @@ describe('issue-panel App (Custom UI)', () => {
     await screen.findByText('list blew up');
   });
 
-  it('clicking "+ Workbench" opens the Create modal', async () => {
+  it('renders one "+ <label>" button per configured transport config', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'issue.list') return ok([]);
+      if (key === 'project.getConfig')
+        return ok({
+          connectionId: 'conn-1',
+          descriptionTemplate: '',
+          configs: [
+            { id: 'cfg-a', label: 'Workbench QAS', type: 'K', target: 'QAS', projectCode: 'ZPROJ' },
+            { id: 'cfg-b', label: 'Customizing PRD', type: 'W', target: 'PRD', projectCode: 'ZPROJ' },
+          ],
+        });
+      return ok(undefined);
+    });
+    render(<App />);
+    await screen.findByRole('button', { name: '+ Workbench QAS' });
+    expect(screen.getByRole('button', { name: '+ Customizing PRD' })).toBeInTheDocument();
+    // Old hardcoded labels no longer exist:
+    expect(screen.queryByRole('button', { name: '+ Workbench' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '+ Customizing' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '+ Copy' })).toBeNull();
+  });
+
+  it('shows the empty-state message when project has no configs', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'issue.list') return ok([]);
+      if (key === 'project.getConfig')
+        return ok({ connectionId: 'conn-1', descriptionTemplate: '', configs: [] });
+      return ok(undefined);
+    });
+    render(<App />);
+    await screen.findByText(/Ask a project admin to add a transport configuration/i);
+    // Link existing is always available:
+    expect(screen.getByRole('button', { name: 'Link existing' })).toBeInTheDocument();
+  });
+
+  it('clicking a config button opens a modal titled with that label and only one input', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'issue.list') return ok([]);
+      if (key === 'project.getConfig')
+        return ok({
+          connectionId: 'conn-1',
+          descriptionTemplate: '',
+          configs: [{ id: 'cfg-a', label: 'Workbench QAS', type: 'K', target: 'QAS', projectCode: 'ZPROJ' }],
+        });
       return ok(undefined);
     });
     const user = userEvent.setup();
     render(<App />);
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('issue.list', { issueKey: 'PROJ-1' }));
-    await user.click(screen.getByRole('button', { name: '+ Workbench' }));
-    await screen.findByText('Create Workbench transport');
+    await user.click(await screen.findByRole('button', { name: '+ Workbench QAS' }));
+    await screen.findByText('Create Workbench QAS');
+    const inputs = screen.getAllByRole('textbox');
+    expect(inputs).toHaveLength(1); // only description override
   });
 
-  it('submitting the Create modal calls issue.create with the typed values', async () => {
+  it('Create submit passes configId (not type/target) to issue.create', async () => {
     invokeMock.mockImplementation(async (key: string, payload?: unknown) => {
       if (key === 'issue.list') return ok([]);
+      if (key === 'project.getConfig')
+        return ok({
+          connectionId: 'conn-1',
+          descriptionTemplate: '',
+          configs: [{ id: 'cfg-a', label: 'Workbench QAS', type: 'K', target: 'QAS', projectCode: 'ZPROJ' }],
+        });
       if (key === 'issue.create') {
-        const p = payload as { type: string };
+        void payload;
         return ok({
           requestId: 'DEVK900200',
-          type: p.type as 'K',
-          target: 'PRD',
-          description: 'My new work',
-          createdAt: '2026-01-03T00:00:00Z',
+          type: 'K' as const,
+          target: 'QAS',
+          description: 'X',
+          createdAt: '2026-01-01T00:00:00Z',
           status: 'D',
           statusText: 'Modifiable',
         });
@@ -155,28 +204,44 @@ describe('issue-panel App (Custom UI)', () => {
     });
     const user = userEvent.setup();
     render(<App />);
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('issue.list', { issueKey: 'PROJ-1' }));
-    await user.click(screen.getByRole('button', { name: '+ Workbench' }));
-    await screen.findByText('Create Workbench transport');
-
-    const inputs = screen.getAllByRole('textbox');
-    expect(inputs.length).toBeGreaterThanOrEqual(2);
-    await user.type(inputs[0], 'My new work');
-    await user.type(inputs[1], 'PRD');
-
+    await user.click(await screen.findByRole('button', { name: '+ Workbench QAS' }));
+    await screen.findByText('Create Workbench QAS');
+    await user.type(screen.getByRole('textbox'), 'My change');
     await user.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => {
-      const createCall = invokeMock.mock.calls.find((c) => c[0] === 'issue.create');
-      expect(createCall).toBeDefined();
-      expect(createCall![1]).toMatchObject({
+      const call = invokeMock.mock.calls.find((c) => c[0] === 'issue.create');
+      expect(call).toBeDefined();
+      expect(call![1]).toMatchObject({
         projectId: '10001',
         issueKey: 'PROJ-1',
-        type: 'K',
-        descriptionOverride: 'My new work',
-        target: 'PRD',
+        configId: 'cfg-a',
+        descriptionOverride: 'My change',
       });
+      expect((call![1] as Record<string, unknown>).type).toBeUndefined();
+      expect((call![1] as Record<string, unknown>).target).toBeUndefined();
     });
-    await screen.findByText('Created DEVK900200');
+  });
+
+  it('Cancel on the Create modal closes it without calling issue.create', async () => {
+    invokeMock.mockImplementation(async (key: string) => {
+      if (key === 'issue.list') return ok([]);
+      if (key === 'project.getConfig')
+        return ok({
+          connectionId: 'conn-1',
+          descriptionTemplate: '',
+          configs: [{ id: 'cfg-a', label: 'Workbench QAS', type: 'K', target: 'QAS', projectCode: 'ZPROJ' }],
+        });
+      return ok(undefined);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: '+ Workbench QAS' }));
+    await screen.findByText('Create Workbench QAS');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(screen.queryByText('Create Workbench QAS')).not.toBeInTheDocument();
+    });
+    expect(invokeMock.mock.calls.find((c) => c[0] === 'issue.create')).toBeUndefined();
   });
 
   it('clicking Release on a non-released row calls issue.release', async () => {
@@ -262,38 +327,6 @@ describe('issue-panel App (Custom UI)', () => {
     await screen.findByText('Linked DEVK900456');
   });
 
-  it('shows an error when issue.create returns Result.fail', async () => {
-    invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'issue.list') return ok([]);
-      if (key === 'issue.create') return fail('cannot create');
-      return ok(undefined);
-    });
-    const user = userEvent.setup();
-    render(<App />);
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('issue.list', { issueKey: 'PROJ-1' }));
-    await user.click(screen.getByRole('button', { name: '+ Customizing' }));
-    await screen.findByText('Create Customizing transport');
-    await user.click(screen.getByRole('button', { name: 'Create' }));
-    await screen.findByText('cannot create');
-  });
-
-  it('Cancel on the Create modal closes it without calling issue.create', async () => {
-    invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'issue.list') return ok([]);
-      return ok(undefined);
-    });
-    const user = userEvent.setup();
-    render(<App />);
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('issue.list', { issueKey: 'PROJ-1' }));
-    await user.click(screen.getByRole('button', { name: '+ Copy' }));
-    await screen.findByText('Create Copy transport');
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => {
-      expect(screen.queryByText('Create Copy transport')).not.toBeInTheDocument();
-    });
-    expect(invokeMock.mock.calls.find((c) => c[0] === 'issue.create')).toBeUndefined();
-  });
-
   it('shows the error message when issue.release returns Result.fail', async () => {
     invokeMock.mockImplementation(async (key: string) => {
       if (key === 'issue.list') return ok(entries);
@@ -346,21 +379,6 @@ describe('issue-panel App (Custom UI)', () => {
     const refreshButtons = screen.getAllByRole('button', { name: 'Refresh' });
     await user.click(refreshButtons[0]);
     await screen.findByText('refresh crash');
-  });
-
-  it('shows the error message when issue.create throws synchronously inside the Create modal', async () => {
-    invokeMock.mockImplementation(async (key: string) => {
-      if (key === 'issue.list') return ok([]);
-      if (key === 'issue.create') throw new Error('create crash');
-      return ok(undefined);
-    });
-    const user = userEvent.setup();
-    render(<App />);
-    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith('issue.list', { issueKey: 'PROJ-1' }));
-    await user.click(screen.getByRole('button', { name: '+ Workbench' }));
-    await screen.findByText('Create Workbench transport');
-    await user.click(screen.getByRole('button', { name: 'Create' }));
-    await screen.findByText('create crash');
   });
 
   it('shows the error message when issue.link returns Result.fail', async () => {
